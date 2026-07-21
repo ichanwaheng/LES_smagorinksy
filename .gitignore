@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+# regeneratable solver outputs / figures
+les_result.npz
+les_flow_past_sphere.png
