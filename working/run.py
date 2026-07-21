@@ -43,10 +43,11 @@ def main() -> None:
     fields = out_dir / "les_sphere_fields.npz"
     solver.save_fields(str(fields))
     mid = solver.plot_midplane(str(out_dir / "flow_past_sphere_midplane.png"))
+    streams = solver.plot_streamlines(str(out_dir / "flow_past_sphere_streamlines.png"))
     wake = solver.plot_wake_profile(str(out_dir / "flow_past_sphere_wake.png"))
     nut = solver.plot_nu_t(str(out_dir / "flow_past_sphere_nut.png"))
 
-    paths = [fields, Path(mid), Path(wake), Path(nut)]
+    paths = [fields, Path(mid), Path(streams), Path(wake), Path(nut)]
     if solver.frames:
         gif = solver.save_gif(str(out_dir / "flow_past_sphere.gif"))
         paths.append(Path(gif))

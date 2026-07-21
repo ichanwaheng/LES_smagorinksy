@@ -28,6 +28,7 @@ py run.py
 Written to `working/outputs/`:
 
 - `flow_past_sphere.gif`  ← animation
+- `flow_past_sphere_streamlines.png`  ← streamlines
 - `flow_past_sphere_midplane.png`
 - `flow_past_sphere_wake.png`
 - `flow_past_sphere_nut.png`

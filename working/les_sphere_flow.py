@@ -13,7 +13,7 @@ Boundary conditions chosen so inlet/outlet do not disturb the sphere wake:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
@@ -448,6 +448,23 @@ class SphereLESSolver:
             ax.axvline(cfg.L, color="tab:red", ls="--", lw=1.2, label="outlet (convective)")
             fig.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
 
+        # Streamlines + velocity vectors on the speed panel
+        Ux = griddata(c[:, :2], U[:, 0], (GX, GY), method="linear")
+        Uy = griddata(c[:, :2], U[:, 1], (GX, GY), method="linear")
+        Ux = np.nan_to_num(np.where(inside, np.nan, Ux), nan=0.0)
+        Uy = np.nan_to_num(np.where(inside, np.nan, Uy), nan=0.0)
+        axes[0].streamplot(
+            gx,
+            gy,
+            Ux,
+            Uy,
+            color="white",
+            density=1.2,
+            linewidth=0.8,
+            arrowsize=0.9,
+            zorder=3,
+        )
+
         # Velocity vectors around the sphere (zoom-friendly subsample)
         near = (
             (c[:, 0] > 1.0)
@@ -464,7 +481,7 @@ class SphereLESSolver:
             U[idx, 0],
             U[idx, 1],
             color="white",
-            alpha=0.55,
+            alpha=0.35,
             scale=35,
             width=0.0025,
             zorder=4,
@@ -479,6 +496,115 @@ class SphereLESSolver:
         fig.savefig(path, dpi=180)
         plt.close(fig)
         print(f"Saved visualization → {path}")
+        return path
+
+    def plot_streamlines(self, path: str = "flow_past_sphere_streamlines.png", band: float = 0.12) -> str:
+        """Draw mid-plane streamlines of the in-plane velocity field around the sphere."""
+        cfg = self.cfg
+        z0 = cfg.sphere_c[2]
+        mask = np.abs(self.xc[:, 2] - z0) < band
+        c = self.xc[mask]
+        U = self.U[mask]
+        speed = np.linalg.norm(U, axis=1) / cfg.U_inf
+
+        gx = np.linspace(0.05, cfg.L - 0.05, 200)
+        gy = np.linspace(0.05, cfg.W - 0.05, 120)
+        GX, GY = np.meshgrid(gx, gy)
+        Ux = griddata(c[:, :2], U[:, 0], (GX, GY), method="linear")
+        Uy = griddata(c[:, :2], U[:, 1], (GX, GY), method="linear")
+        speed_g = griddata(c[:, :2], speed, (GX, GY), method="linear")
+
+        inside = (GX - cfg.sphere_c[0]) ** 2 + (GY - cfg.sphere_c[1]) ** 2 <= (cfg.sphere_r * 1.02) ** 2
+        bad = inside | ~np.isfinite(Ux) | ~np.isfinite(Uy) | ~np.isfinite(speed_g)
+        Ux = np.array(Ux, dtype=np.float64)
+        Uy = np.array(Uy, dtype=np.float64)
+        speed_g = np.array(speed_g, dtype=np.float64)
+        Ux[bad] = np.nan
+        Uy[bad] = np.nan
+        speed_g[bad] = np.nan
+
+        # streamplot needs finite values; fill masked region with 0 then mask visually with sphere patch
+        Ux_s = np.nan_to_num(Ux, nan=0.0)
+        Uy_s = np.nan_to_num(Uy, nan=0.0)
+        speed_plot = np.ma.array(speed_g, mask=~np.isfinite(speed_g))
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
+
+        # Full domain streamlines
+        ax = axes[0]
+        cf = ax.contourf(GX, GY, speed_plot, levels=28, cmap="viridis")
+        ax.streamplot(
+            gx,
+            gy,
+            Ux_s,
+            Uy_s,
+            color="white",
+            density=1.35,
+            linewidth=0.9,
+            arrowsize=1.0,
+            minlength=0.1,
+        )
+        ax.add_patch(
+            Circle(
+                (cfg.sphere_c[0], cfg.sphere_c[1]),
+                cfg.sphere_r,
+                facecolor="white",
+                edgecolor="k",
+                lw=1.8,
+                zorder=5,
+            )
+        )
+        ax.set_aspect("equal")
+        ax.set_xlim(0, cfg.L)
+        ax.set_ylim(0, cfg.W)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title("Streamlines — full domain")
+        ax.axvline(0.0, color="tab:green", ls="--", lw=1.2, label="inlet")
+        ax.axvline(cfg.L, color="tab:red", ls="--", lw=1.2, label="outlet")
+        ax.legend(loc="upper right", fontsize=8)
+        fig.colorbar(cf, ax=ax, fraction=0.046, pad=0.04, label=r"$|U|/U_\infty$")
+
+        # Zoom around sphere / near wake
+        ax = axes[1]
+        cf2 = ax.contourf(GX, GY, speed_plot, levels=28, cmap="viridis")
+        ax.streamplot(
+            gx,
+            gy,
+            Ux_s,
+            Uy_s,
+            color="white",
+            density=2.0,
+            linewidth=1.0,
+            arrowsize=1.1,
+            minlength=0.08,
+        )
+        ax.add_patch(
+            Circle(
+                (cfg.sphere_c[0], cfg.sphere_c[1]),
+                cfg.sphere_r,
+                facecolor="white",
+                edgecolor="k",
+                lw=1.8,
+                zorder=5,
+            )
+        )
+        ax.set_aspect("equal")
+        ax.set_xlim(1.5, 6.5)
+        ax.set_ylim(0.8, 4.2)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title("Streamlines — zoom near sphere")
+        fig.colorbar(cf2, ax=ax, fraction=0.046, pad=0.04, label=r"$|U|/U_\infty$")
+
+        fig.suptitle(
+            "Streamlines of turbulent LES flow past a sphere (mid-plane)\n"
+            "Inlet: U∞ · Outlet: convective · Outer walls: free-slip · Sphere: no-slip",
+            fontsize=11,
+        )
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+        print(f"Saved streamlines → {path}")
         return path
 
     def plot_wake_profile(self, path: str = "flow_past_sphere_wake.png") -> str:
@@ -566,6 +692,7 @@ class SphereLESSolver:
         outs = {
             "fields": fields,
             "midplane": self.plot_midplane(f"{prefix}_midplane.png"),
+            "streamlines": self.plot_streamlines(f"{prefix}_streamlines.png"),
             "wake": self.plot_wake_profile(f"{prefix}_wake.png"),
             "nut": self.plot_nu_t(f"{prefix}_nut.png"),
         }
