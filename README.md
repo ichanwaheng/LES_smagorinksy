@@ -2,7 +2,27 @@
 
 LES (Smagorinsky) finite-volume simulation of **turbulent flow past a sphere**.
 
-## Quick start (from this repo)
+## Working folder (recommended)
+
+Use the self-contained package:
+
+```powershell
+cd LES_smagorinksy\working
+py -m pip install -r requirements.txt
+py run.py --quick
+```
+
+Full output generation:
+
+```powershell
+py run.py
+```
+
+Results are written to `working/outputs/`.
+
+See `working/README.md` for details.
+
+## Quick start (repo root)
 
 ```powershell
 cd LES_smagorinksy
@@ -17,7 +37,7 @@ Then open and run **`PISO_SOLVER.ipynb`**.
 
 1. `computational_grid_gmsh_visualized.py` → `fluid_mesh_3d.msh`
 2. `read_mesh_from_the_generated_mesh.ipynb` → `processed_mesh.npz` (with boundary tags)
-3. `PISO_SOLVER.ipynb` / `les_sphere_flow.py` → LES run + wake visualization
+3. `working/` or `PISO_SOLVER.ipynb` / `les_sphere_flow.py` → LES run + wake visualization
 
 ## Boundary conditions
 
@@ -39,4 +59,9 @@ Generate them with:
 py les_sphere_flow.py --output
 ```
 
-or open `PISO_SOLVER.ipynb` and Run All.
+or:
+
+```powershell
+cd working
+py run.py
+```
