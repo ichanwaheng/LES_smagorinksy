@@ -3,3 +3,4 @@ scipy>=1.10
 matplotlib>=3.7
 meshio>=5.3
 gmsh>=4.11
+Pillow>=9.0

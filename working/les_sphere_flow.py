@@ -13,12 +13,16 @@ Boundary conditions chosen so inlet/outlet do not disturb the sphere wake:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from io import BytesIO
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle
+from PIL import Image
 from scipy import sparse
+from scipy.interpolate import griddata
 
 
 INLET, OUTLET, WALL, OBJECT = 1, 2, 3, 4
@@ -35,6 +39,7 @@ class SimConfig:
     inlet_ti: float = 0.01
     seed: int = 7
     print_every: int = 50
+    frame_every: int = 20  # capture mid-plane frame every N steps for GIF
     urf_u: float = 0.5
     urf_p: float = 0.3
     L: float = 10.0
@@ -42,6 +47,9 @@ class SimConfig:
     H: float = 5.0
     sphere_c: tuple[float, float, float] = (3.0, 2.5, 2.5)
     sphere_r: float = 0.5
+    gif_duration_ms: int = 120
+    gif_vmax: float = 1.6  # fixed color scale for smooth animation
+
 
 
 class SphereLESSolver:
@@ -100,8 +108,18 @@ class SphereLESSolver:
         self.Uf_out = np.tile(np.array([self.cfg.U_inf, 0.0, 0.0]), (len(self.outlet), 1))
         self.object_cells = np.unique(self.owner[self.object])
         self.history: list[dict] = []
+        self.frames: list[Image.Image] = []
 
         self._build_pressure_matrix()
+        # Precompute mid-plane sample mask / grid for fast GIF frames
+        z0 = self.cfg.sphere_c[2]
+        self._mid_mask = np.abs(self.xc[:, 2] - z0) < 0.12
+        self._gx = np.linspace(0.0, self.cfg.L, 160)
+        self._gy = np.linspace(0.0, self.cfg.W, 100)
+        self._GX, self._GY = np.meshgrid(self._gx, self._gy)
+        self._inside = (self._GX - self.cfg.sphere_c[0]) ** 2 + (
+            self._GY - self.cfg.sphere_c[1]
+        ) ** 2 <= self.cfg.sphere_r**2
 
     def _build_pressure_matrix(self) -> None:
         """Optional Laplacian (kept for diagnostics); AC scheme does not require it each step."""
@@ -255,7 +273,73 @@ class SphereLESSolver:
         if np.any(too_fast):
             self.U[too_fast] *= (cap / speed[too_fast])[:, None]
 
-    def run(self, t_end: float | None = None, max_steps: int | None = None) -> None:
+    def capture_frame(self, t: float, step: int) -> None:
+        """Capture one mid-plane |U| frame for the GIF."""
+        cfg = self.cfg
+        c = self.xc[self._mid_mask]
+        speed = np.linalg.norm(self.U[self._mid_mask], axis=1) / cfg.U_inf
+        speed_g = griddata(c[:, :2], speed, (self._GX, self._GY), method="linear")
+        speed_g = np.ma.array(speed_g, mask=self._inside | ~np.isfinite(speed_g))
+
+        fig, ax = plt.subplots(figsize=(8.5, 3.6), dpi=100)
+        cf = ax.contourf(
+            self._GX,
+            self._GY,
+            speed_g,
+            levels=24,
+            cmap="viridis",
+            vmin=0.0,
+            vmax=cfg.gif_vmax,
+        )
+        ax.add_patch(
+            Circle(
+                (cfg.sphere_c[0], cfg.sphere_c[1]),
+                cfg.sphere_r,
+                facecolor="white",
+                edgecolor="k",
+                lw=1.5,
+                zorder=5,
+            )
+        )
+        ax.set_aspect("equal")
+        ax.set_xlim(0, cfg.L)
+        ax.set_ylim(0, cfg.W)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title(f"LES flow past sphere  |  step {step}  t={t:.4f}")
+        ax.axvline(0.0, color="tab:green", ls="--", lw=1)
+        ax.axvline(cfg.L, color="tab:red", ls="--", lw=1)
+        fig.colorbar(cf, ax=ax, fraction=0.046, pad=0.04, label=r"$|U|/U_\infty$")
+        fig.tight_layout()
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=100)
+        plt.close(fig)
+        buf.seek(0)
+        self.frames.append(Image.open(buf).convert("P", palette=Image.ADAPTIVE))
+
+    def save_gif(self, path: str = "flow_past_sphere.gif") -> str:
+        if not self.frames:
+            raise RuntimeError("No frames captured. Run with frame capturing enabled.")
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        self.frames[0].save(
+            out,
+            save_all=True,
+            append_images=self.frames[1:],
+            duration=self.cfg.gif_duration_ms,
+            loop=0,
+            optimize=False,
+        )
+        print(f"Saved GIF → {out}  ({len(self.frames)} frames)")
+        return str(out)
+
+    def run(
+        self,
+        t_end: float | None = None,
+        max_steps: int | None = None,
+        capture_gif: bool = True,
+    ) -> None:
         cfg = self.cfg
         t_end = cfg.t_end if t_end is None else t_end
         n_steps = int(np.ceil(t_end / cfg.dt))
@@ -270,11 +354,16 @@ class SphereLESSolver:
             "BCs: inlet=U∞(+mild TI), outlet=convective/soft-p, "
             "outer walls=free-slip, sphere=no-slip"
         )
+        if capture_gif:
+            self.frames = []
+            print(f"GIF frames every {cfg.frame_every} steps")
 
         t = 0.0
         for step in range(1, n_steps + 1):
             self.step()
             t += cfg.dt
+            if capture_gif and (step == 1 or step % cfg.frame_every == 0 or step == n_steps):
+                self.capture_frame(t, step)
             if step % cfg.print_every == 0 or step == 1 or step == n_steps:
                 speed = np.linalg.norm(self.U, axis=1)
                 if not np.isfinite(speed).all():
@@ -480,6 +569,8 @@ class SphereLESSolver:
             "wake": self.plot_wake_profile(f"{prefix}_wake.png"),
             "nut": self.plot_nu_t(f"{prefix}_nut.png"),
         }
+        if self.frames:
+            outs["gif"] = self.save_gif(f"{prefix}.gif")
         return outs
 
 
@@ -490,7 +581,8 @@ def main() -> None:
     parser.add_argument("--dt", type=float, default=1e-4)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--quick", action="store_true")
-    parser.add_argument("--output", action="store_true", help="Longer run to generate final plots")
+    parser.add_argument("--output", action="store_true", help="Longer run to generate final plots/GIF")
+    parser.add_argument("--no-gif", action="store_true")
     args = parser.parse_args()
 
     cfg = SimConfig(t_end=args.t_end, dt=args.dt, print_every=50, inlet_ti=0.015)
@@ -498,17 +590,19 @@ def main() -> None:
         cfg.t_end = 0.02
         cfg.dt = 1e-4
         cfg.print_every = 20
+        cfg.frame_every = 10
         max_steps = 100
     elif args.output:
         cfg.t_end = 0.2
         cfg.dt = 1e-4
         cfg.print_every = 100
+        cfg.frame_every = 25
         max_steps = 800
     else:
         max_steps = args.max_steps
 
     solver = SphereLESSolver(mesh_path=args.mesh, cfg=cfg)
-    solver.run(max_steps=max_steps)
+    solver.run(max_steps=max_steps, capture_gif=not args.no_gif)
     outs = solver.write_all_outputs()
     print("Generated outputs:", outs)
 
