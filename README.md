@@ -31,3 +31,12 @@ Then open and run **`PISO_SOLVER.ipynb`**.
 - `les_sphere_fields.npz`
 - `flow_past_sphere_midplane.png`
 - `flow_past_sphere_wake.png`
+- `flow_past_sphere_nut.png`
+
+Generate them with:
+
+```powershell
+py les_sphere_flow.py --output
+```
+
+or open `PISO_SOLVER.ipynb` and Run All.
