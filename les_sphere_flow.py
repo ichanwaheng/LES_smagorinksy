@@ -312,27 +312,40 @@ class SphereLESSolver:
         )
         print(f"Saved fields → {path}")
 
-    def plot_midplane(self, path: str = "flow_past_sphere_midplane.png", band: float = 0.15) -> str:
+    def plot_midplane(self, path: str = "flow_past_sphere_midplane.png", band: float = 0.12) -> str:
+        from scipy.interpolate import griddata
+
         cfg = self.cfg
         z0 = cfg.sphere_c[2]
         mask = np.abs(self.xc[:, 2] - z0) < band
         c = self.xc[mask]
-        speed = np.linalg.norm(self.U[mask], axis=1) / cfg.U_inf
+        U = self.U[mask]
+        speed = np.linalg.norm(U, axis=1) / cfg.U_inf
         p = self.p[mask]
 
+        gx = np.linspace(0.0, cfg.L, 220)
+        gy = np.linspace(0.0, cfg.W, 140)
+        GX, GY = np.meshgrid(gx, gy)
+        speed_g = griddata(c[:, :2], speed, (GX, GY), method="linear")
+        p_g = griddata(c[:, :2], p, (GX, GY), method="linear")
+        # Mask interior of sphere
+        inside = (GX - cfg.sphere_c[0]) ** 2 + (GY - cfg.sphere_c[1]) ** 2 <= cfg.sphere_r**2
+        speed_g = np.ma.array(speed_g, mask=inside | ~np.isfinite(speed_g))
+        p_g = np.ma.array(p_g, mask=inside | ~np.isfinite(p_g))
+
         fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
-        for ax, vals, title, cmap in [
-            (axes[0], speed, r"Velocity magnitude $|U|/U_\infty$", "viridis"),
-            (axes[1], p, "Pressure $p$", "coolwarm"),
+        for ax, field, title, cmap in [
+            (axes[0], speed_g, r"Velocity magnitude $|U|/U_\infty$", "viridis"),
+            (axes[1], p_g, "Pressure $p$", "coolwarm"),
         ]:
-            sc = ax.scatter(c[:, 0], c[:, 1], c=vals, s=6, cmap=cmap, alpha=0.9)
+            cf = ax.contourf(GX, GY, field, levels=28, cmap=cmap)
             ax.add_patch(
                 Circle(
                     (cfg.sphere_c[0], cfg.sphere_c[1]),
                     cfg.sphere_r,
                     facecolor="white",
                     edgecolor="k",
-                    lw=1.5,
+                    lw=1.8,
                     zorder=5,
                 )
             )
@@ -342,9 +355,31 @@ class SphereLESSolver:
             ax.set_title(title)
             ax.set_xlim(0, cfg.L)
             ax.set_ylim(0, cfg.W)
-            ax.axvline(0.0, color="tab:green", ls="--", lw=1, label="inlet (U∞)")
-            ax.axvline(cfg.L, color="tab:red", ls="--", lw=1, label="outlet (convective)")
-            fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+            ax.axvline(0.0, color="tab:green", ls="--", lw=1.2, label="inlet (U∞)")
+            ax.axvline(cfg.L, color="tab:red", ls="--", lw=1.2, label="outlet (convective)")
+            fig.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
+
+        # Velocity vectors around the sphere (zoom-friendly subsample)
+        near = (
+            (c[:, 0] > 1.0)
+            & (c[:, 0] < 7.0)
+            & (c[:, 1] > 0.5)
+            & (c[:, 1] < 4.5)
+        )
+        idx = np.where(near)[0]
+        if len(idx) > 400:
+            idx = idx[:: max(1, len(idx) // 400)]
+        axes[0].quiver(
+            c[idx, 0],
+            c[idx, 1],
+            U[idx, 0],
+            U[idx, 1],
+            color="white",
+            alpha=0.55,
+            scale=35,
+            width=0.0025,
+            zorder=4,
+        )
         axes[0].legend(loc="upper right", fontsize=8)
         fig.suptitle(
             "Turbulent LES flow past a sphere — mid-plane\n"
@@ -352,7 +387,7 @@ class SphereLESSolver:
             "Outer walls: free-slip · Sphere: no-slip",
             fontsize=11,
         )
-        fig.savefig(path, dpi=160)
+        fig.savefig(path, dpi=180)
         plt.close(fig)
         print(f"Saved visualization → {path}")
         return path
@@ -361,50 +396,121 @@ class SphereLESSolver:
         cfg = self.cfg
         cy, cz = cfg.sphere_c[1], cfg.sphere_c[2]
         mask = (
-            (np.abs(self.xc[:, 1] - cy) < 0.25)
-            & (np.abs(self.xc[:, 2] - cz) < 0.25)
+            (np.abs(self.xc[:, 1] - cy) < 0.2)
+            & (np.abs(self.xc[:, 2] - cz) < 0.2)
             & (self.xc[:, 0] > cfg.sphere_c[0])
         )
         x = self.xc[mask, 0]
         u = self.U[mask, 0]
         order = np.argsort(x)
-        fig, ax = plt.subplots(figsize=(8, 4), constrained_layout=True)
-        ax.plot(x[order], u[order] / cfg.U_inf, "o-", ms=3)
+        x, u = x[order], u[order]
+
+        # Bin-average for a cleaner wake curve while keeping scatter of raw samples
+        bins = np.linspace(cfg.sphere_c[0] + cfg.sphere_r, cfg.L, 60)
+        dig = np.digitize(x, bins)
+        xb, ub = [], []
+        for i in range(1, len(bins)):
+            sel = dig == i
+            if np.any(sel):
+                xb.append(0.5 * (bins[i - 1] + bins[i]))
+                ub.append(np.mean(u[sel]) / cfg.U_inf)
+
+        fig, ax = plt.subplots(figsize=(9, 4.2), constrained_layout=True)
+        ax.plot(x, u / cfg.U_inf, ".", ms=2.5, alpha=0.25, color="tab:blue", label="samples")
+        if xb:
+            ax.plot(xb, ub, "-", lw=2.2, color="tab:red", label="binned mean")
         ax.axhline(1.0, color="k", ls=":", lw=1)
         ax.axvline(cfg.sphere_c[0] + cfg.sphere_r, color="gray", ls="--", label="sphere rear")
         ax.set_xlabel("x")
         ax.set_ylabel(r"$U_x / U_\infty$")
-        ax.set_title("Wake centerline velocity")
+        ax.set_title("Wake centerline velocity behind the sphere")
+        ax.set_ylim(-0.5, 1.4)
         ax.legend()
-        fig.savefig(path, dpi=160)
+        fig.savefig(path, dpi=180)
         plt.close(fig)
         print(f"Saved wake profile → {path}")
         return path
+
+    def plot_nu_t(self, path: str = "flow_past_sphere_nut.png", band: float = 0.12) -> str:
+        from scipy.interpolate import griddata
+
+        cfg = self.cfg
+        z0 = cfg.sphere_c[2]
+        mask = np.abs(self.xc[:, 2] - z0) < band
+        c = self.xc[mask]
+        nut = self.nu_t[mask] / max(cfg.nu, 1e-30)
+
+        gx = np.linspace(0.0, cfg.L, 220)
+        gy = np.linspace(0.0, cfg.W, 140)
+        GX, GY = np.meshgrid(gx, gy)
+        nut_g = griddata(c[:, :2], nut, (GX, GY), method="linear")
+        inside = (GX - cfg.sphere_c[0]) ** 2 + (GY - cfg.sphere_c[1]) ** 2 <= cfg.sphere_r**2
+        nut_g = np.ma.array(nut_g, mask=inside | ~np.isfinite(nut_g))
+
+        fig, ax = plt.subplots(figsize=(10, 4.2), constrained_layout=True)
+        cf = ax.contourf(GX, GY, nut_g, levels=24, cmap="magma")
+        ax.add_patch(
+            Circle(
+                (cfg.sphere_c[0], cfg.sphere_c[1]),
+                cfg.sphere_r,
+                facecolor="white",
+                edgecolor="k",
+                lw=1.8,
+                zorder=5,
+            )
+        )
+        ax.set_aspect("equal")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title(r"Smagorinsky eddy viscosity $\nu_t/\nu$ (mid-plane)")
+        ax.set_xlim(0, cfg.L)
+        ax.set_ylim(0, cfg.W)
+        fig.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+        print(f"Saved eddy-viscosity map → {path}")
+        return path
+
+    def write_all_outputs(self, prefix: str = "flow_past_sphere") -> dict[str, str]:
+        fields = "les_sphere_fields.npz"
+        self.save_fields(fields)
+        outs = {
+            "fields": fields,
+            "midplane": self.plot_midplane(f"{prefix}_midplane.png"),
+            "wake": self.plot_wake_profile(f"{prefix}_wake.png"),
+            "nut": self.plot_nu_t(f"{prefix}_nut.png"),
+        }
+        return outs
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="LES turbulent flow past a sphere")
     parser.add_argument("--mesh", default="processed_mesh.npz")
     parser.add_argument("--t-end", type=float, default=0.2)
-    parser.add_argument("--dt", type=float, default=2e-4)
+    parser.add_argument("--dt", type=float, default=1e-4)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--output", action="store_true", help="Longer run to generate final plots")
     args = parser.parse_args()
 
-    cfg = SimConfig(t_end=args.t_end, dt=args.dt)
+    cfg = SimConfig(t_end=args.t_end, dt=args.dt, print_every=50, inlet_ti=0.015)
     if args.quick:
         cfg.t_end = 0.02
-        cfg.dt = 2e-4
-        cfg.print_every = 10
-        max_steps = 50
+        cfg.dt = 1e-4
+        cfg.print_every = 20
+        max_steps = 100
+    elif args.output:
+        cfg.t_end = 0.2
+        cfg.dt = 1e-4
+        cfg.print_every = 100
+        max_steps = 800
     else:
         max_steps = args.max_steps
 
     solver = SphereLESSolver(mesh_path=args.mesh, cfg=cfg)
     solver.run(max_steps=max_steps)
-    solver.save_fields()
-    solver.plot_midplane()
-    solver.plot_wake_profile()
+    outs = solver.write_all_outputs()
+    print("Generated outputs:", outs)
 
 
 if __name__ == "__main__":
