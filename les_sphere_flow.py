@@ -13,7 +13,7 @@ Boundary conditions chosen so inlet/outlet do not disturb the sphere wake:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
