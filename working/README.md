@@ -38,3 +38,7 @@ Written to `working/outputs/`:
 
 Open `run_les_sphere.ipynb` from this folder and Run All.
 The GIF is displayed in the notebook.
+
+## Theory PDF
+
+See `docs/LES_Flow_Past_Sphere_Theory_and_Algorithm.pdf` for physics, BCs, LES, numerical methods, algorithm and pseudocode.
