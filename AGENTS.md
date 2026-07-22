@@ -24,6 +24,10 @@ can be run directly without regenerating the mesh.
   as a thin no-slip baffle -> transfer the CFD pressure jump as wind load -> deflect the
   membrane (loaded force-density equilibrium) -> re-run the flow, iterating to convergence.
 - `plot_fsi.py` — 3-D deflected-membrane + flow-slice + convergence plots.
+- `animate_les.py` / `animate_fsi.py` — GIFs of the developing flow (past sphere / past membrane).
+- `flutter_membrane.py` — transient 3-D membrane flutter: modal aeroelastic (van-der-Pol
+  negative damping + cubic saturation) limit-cycle oscillation about the wind-deflected
+  shape; renders a 3-D GIF. Reduced-order aeroelastic model (not fully unsteady CFD-coupled).
 
 ## Running
 
