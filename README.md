@@ -65,3 +65,16 @@ or:
 cd working
 py run.py
 ```
+
+
+## Flexible membrane FSI (new)
+
+The sphere package in `working/` is unchanged. New code lives in `membrane_fsi/`:
+
+```powershell
+cd membrane_fsi
+py -m pip install -r requirements.txt
+py run.py --quick
+```
+
+See `membrane_fsi/README.md`.
