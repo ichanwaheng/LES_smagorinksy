@@ -33,22 +33,29 @@ import les_solver
 import uwm_membrane as uwm
 
 CHANNEL_MESH = "channel_mesh.npz"
+DOMAIN = np.array([10.0, 5.0, 5.0])          # channel extents (x, y, z)
+
+
+def span_axes(wind_axis):
+    """The two axes spanning the membrane footprint (perpendicular to the wind)."""
+    return [i for i in (0, 1, 2) if i != wind_axis]
 
 
 # --------------------------------------------------------------------------- #
 # Membrane
 # --------------------------------------------------------------------------- #
-def form_find_membrane(span=3.0, rise=1.5, n=16, X0=5.0, Y0=1.0, Z0=1.0,
+def form_find_membrane(span=3.0, rise=1.5, n=16, wind_axis=0,
                        sigma=3.0, cable=30.0, iters=25):
-    """Form-find a hypar canopy and place it in the channel facing +x wind.
+    """Form-find a hypar canopy and place it across the channel facing the wind.
 
     The UWM hypar is built over a local square; its local 'height' becomes the
-    global x (windward/leeward bulge) and the square footprint maps to the (y, z)
-    channel cross-section, so the surface is single-valued in x = X(y, z)."""
+    coordinate along ``wind_axis`` (windward/leeward bulge) and the square
+    footprint maps to the two spanning axes, so the surface is single-valued
+    along the wind direction."""
+    a, b = span_axes(wind_axis)
     coords, tris, cables, corners, _ = uwm.build_structured_rectangle_mesh(
         span, span, n, n)
     lx, ly = coords[:, 0], coords[:, 1]
-    # local hypar height field (saddle) in [0, rise]
     lz = rise * (lx / span) * (1 - ly / span) + rise * (1 - lx / span) * (ly / span)
     coords[:, 2] = lz
     corner_ids = np.unique([int(v[0]) for v in corners.values()])
@@ -59,18 +66,18 @@ def form_find_membrane(span=3.0, rise=1.5, n=16, X0=5.0, Y0=1.0, Z0=1.0,
     res = uwm.run_uwm(coords.copy(), tris, cables, corner_ids, s,
                       np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]))
     fc = res["coords"]
-    # map local (lx, ly, lz) -> global (x, y, z): height -> x, footprint -> (y, z)
+    # place: footprint centred on the two span axes, bulge centred on wind axis
     glob = np.zeros_like(fc)
-    glob[:, 0] = X0 + (fc[:, 2] - rise * 0.5)
-    glob[:, 1] = Y0 + fc[:, 0]
-    glob[:, 2] = Z0 + fc[:, 1]
+    glob[:, a] = DOMAIN[a] * 0.5 - span * 0.5 + fc[:, 0]
+    glob[:, b] = DOMAIN[b] * 0.5 - span * 0.5 + fc[:, 1]
+    glob[:, wind_axis] = DOMAIN[wind_axis] * 0.5 + (fc[:, 2] - rise * 0.5)
 
     mem = {
         "coords0": glob.copy(), "coords": glob.copy(),
         "triangles": tris, "cables": cables, "fixed": corner_ids,
         "membrane_weights": res["membrane_weights"],
         "cable_weights": res["cable_weights"],
-        "n_nodes": glob.shape[0],
+        "n_nodes": glob.shape[0], "wind_axis": wind_axis,
     }
     return mem
 
@@ -127,19 +134,22 @@ class ChannelFlow:
         self.fc_int = self.mesh["face_centroids"][self.internal]
 
     def blocked_mask(self, mem):
-        """Internal faces crossed by the (single-valued x=X(y,z)) membrane surface."""
+        """Internal faces crossed by the membrane surface (single-valued along the
+        wind axis: coord_wind = W(span_a, span_b))."""
+        w = mem["wind_axis"]
+        a, b = span_axes(w)
         c = mem["coords"]
-        interp = LinearNDInterpolator(c[:, 1:3], c[:, 0])   # (y,z) -> x
-        XP = interp(self.cc[self.P, 1], self.cc[self.P, 2])
-        XN = interp(self.cc[self.N, 1], self.cc[self.N, 2])
-        valid = ~(np.isnan(XP) | np.isnan(XN))
-        sP = self.cc[self.P, 0] - np.where(np.isnan(XP), 0.0, XP)
-        sN = self.cc[self.N, 0] - np.where(np.isnan(XN), 0.0, XN)
+        interp = LinearNDInterpolator(c[:, [a, b]], c[:, w])
+        WP = interp(self.cc[self.P][:, [a, b]])
+        WN = interp(self.cc[self.N][:, [a, b]])
+        valid = ~(np.isnan(WP) | np.isnan(WN))
+        sP = self.cc[self.P, w] - np.where(np.isnan(WP), 0.0, WP)
+        sN = self.cc[self.N, w] - np.where(np.isnan(WN), 0.0, WN)
         return valid & (np.sign(sP) != np.sign(sN)) & (sP != sN)
 
-    def solve(self, blocked, nu=0.02, u_wind=1.0, iters=150, **kw):
+    def solve(self, blocked, nu=0.02, u_wind=1.0, iters=150, wind_axis=0, **kw):
         return les_solver.run(mesh=self.mesh, blocked_internal=blocked,
-                              nu=nu, U=u_wind, iters=iters,
+                              nu=nu, U=u_wind, iters=iters, wind_axis=wind_axis,
                               limiter="vanleer", alpha_u=0.5, alpha_p=0.3,
                               avg_last=max(1, iters // 3), tol=1e-4,
                               out_path="/tmp/fsi_flow.npz", log_every=max(iters, 1),
@@ -148,9 +158,10 @@ class ChannelFlow:
 
 def transfer_load(g, p, mem, load_scale):
     """Net pressure force per blocked face -> membrane nodal load (nearest node)."""
+    a, b = span_axes(mem["wind_axis"])
     Fface = (p[g["mem_P"]] - p[g["mem_N"]])[:, None] * g["mem_Sf"]   # (nblk, 3)
-    tree = cKDTree(mem["coords"][:, 1:3])
-    _, node = tree.query(g["mem_fc"][:, 1:3])
+    tree = cKDTree(mem["coords"][:, [a, b]])
+    _, node = tree.query(g["mem_fc"][:, [a, b]])
     f = np.zeros((mem["n_nodes"], 3))
     np.add.at(f, node, Fface)
     return load_scale * f, Fface.sum(axis=0)
@@ -160,36 +171,39 @@ def transfer_load(g, p, mem, load_scale):
 # FSI driver
 # --------------------------------------------------------------------------- #
 def run_fsi(n_fsi=5, nu=0.02, u_wind=1.0, load_scale=8.0, relax=0.5,
-            flow_iters=150, out="fsi_result.npz"):
+            flow_iters=150, wind_axis=0, out="fsi_result.npz"):
     flow = ChannelFlow()
-    mem = form_find_membrane()
+    mem = form_find_membrane(wind_axis=wind_axis)
+    axname = "xyz"[wind_axis]
     print(f"Membrane: {mem['n_nodes']} nodes, {len(mem['triangles'])} triangles, "
-          f"span in y,z; form-found prestress ~3 kN/m")
-    print(f"FSI: n_fsi={n_fsi}, u_wind={u_wind}, load_scale={load_scale}, relax={relax}")
+          f"form-found prestress ~3 kN/m")
+    print(f"FSI: n_fsi={n_fsi}, wind along {axname}-axis, u_wind={u_wind}, "
+          f"load_scale={load_scale}, relax={relax}")
 
     history = []
     p = None
     g = None
     for k in range(1, n_fsi + 1):
         blocked = flow.blocked_mask(mem)
-        u, p, mesh, g, _ = flow.solve(blocked, nu=nu, u_wind=u_wind, iters=flow_iters)
+        u, p, mesh, g, _ = flow.solve(blocked, nu=nu, u_wind=u_wind,
+                                      iters=flow_iters, wind_axis=wind_axis)
         nodal_load, net_F = transfer_load(g, p, mem, load_scale)
 
         x_before = mem["coords"].copy()
         deflect_membrane(mem, nodal_load, relax=relax)
-        # deflection of the free surface relative to the form-found reference
-        free = np.setdiff1d(np.arange(mem["n_nodes"]), np.unique(mem["fixed"]))
         defl = np.linalg.norm(mem["coords"] - mem["coords0"], axis=1)
         move = np.linalg.norm(mem["coords"] - x_before, axis=1).max()
         max_defl = defl.max()
-        history.append((k, int(blocked.sum()), float(net_F[0]), float(max_defl), float(move)))
-        print(f"[FSI {k}] blocked_faces={int(blocked.sum())}  net_Fx={net_F[0]:.3f}  "
+        net_wind = net_F[wind_axis]          # thrust along the wind direction
+        history.append((k, int(blocked.sum()), float(net_wind),
+                        float(max_defl), float(move)))
+        print(f"[FSI {k}] blocked_faces={int(blocked.sum())}  net_F_wind={net_wind:.3f}  "
               f"max_deflection={max_defl:.3f} m  update={move:.3e} m")
 
     np.savez(out,
              mem_coords0=mem["coords0"], mem_coords=mem["coords"],
              triangles=mem["triangles"], cables=mem["cables"],
-             fixed=mem["fixed"],
+             fixed=mem["fixed"], wind_axis=wind_axis,
              cell_centroids=mesh["cell_centroids"], velocity=u, pressure=p,
              history=np.array(history),
              u_wind=u_wind, nu=nu, load_scale=load_scale)
@@ -205,8 +219,10 @@ if __name__ == "__main__":
     ap.add_argument("--load_scale", type=float, default=8.0)
     ap.add_argument("--relax", type=float, default=0.5)
     ap.add_argument("--flow_iters", type=int, default=150)
+    ap.add_argument("--wind_axis", type=int, default=0, choices=[0, 1, 2],
+                    help="wind direction: 0=x, 1=y, 2=z")
     ap.add_argument("--out", type=str, default="fsi_result.npz")
     args = ap.parse_args()
     run_fsi(n_fsi=args.n_fsi, nu=args.nu, u_wind=args.u_wind,
             load_scale=args.load_scale, relax=args.relax,
-            flow_iters=args.flow_iters, out=args.out)
+            flow_iters=args.flow_iters, wind_axis=args.wind_axis, out=args.out)

@@ -50,19 +50,22 @@ def load_mesh(path="processed_mesh.npz"):
     }
 
 
-def classify_boundaries(mesh):
+def classify_boundaries(mesh, wind_axis=0):
+    """Inlet/outlet are the min/max faces along ``wind_axis``; other box faces are
+    free-slip walls; faces on the sphere (if present) are the no-slip object."""
     fc = mesh["face_centroids"]
     b = np.where(mesh["neighbour"] == -1)[0]
-    x = fc[b, 0]
+    coord = fc[b, wind_axis]
+    cmin, cmax = coord.min(), coord.max()
     dist_sphere = np.linalg.norm(fc[b] - SPHERE_CENTRE, axis=1)
     btype = np.full(len(b), WALL, dtype=np.int64)
-    btype[np.abs(x - 0.0) < 1e-2] = INLET
-    btype[np.abs(x - L) < 1e-2] = OUTLET
+    btype[np.abs(coord - cmin) < 1e-2] = INLET
+    btype[np.abs(coord - cmax) < 1e-2] = OUTLET
     btype[dist_sphere < (SPHERE_R + 0.3)] = OBJECT
     return b, btype
 
 
-def build_geometry(mesh, blocked_internal=None):
+def build_geometry(mesh, blocked_internal=None, wind_axis=0):
     """Build FV geometry. ``blocked_internal`` is an optional boolean mask over the
     internal faces (in the order returned by ``np.where(neighbour != -1)``); those
     faces are turned into a thin no-slip immersed baffle (a membrane): each becomes
@@ -80,7 +83,7 @@ def build_geometry(mesh, blocked_internal=None):
     wP = dN / (dP + dN)
     a_geom = fa[internal] / d_len
 
-    b, btype = classify_boundaries(mesh)
+    b, btype = classify_boundaries(mesh, wind_axis=wind_axis)
     b_owner = owner[b]; b_Sf = Sf[b]; b_fa = fa[b]
     b_db = np.linalg.norm(fc[b] - cc[b_owner], axis=1)
 
@@ -161,11 +164,11 @@ def smagorinsky_nu_t(u, mesh, g, U_in, Cs=0.17):
 def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
         Cs=0.17, beta=1.0, limiter="vanleer", avg_last=None, tol=1e-4,
         mesh_path="processed_mesh.npz", out_path="les_result.npz", log_every=10,
-        blocked_internal=None, mesh=None):
+        blocked_internal=None, mesh=None, wind_axis=0):
     t0 = time.time()
     if mesh is None:
         mesh = load_mesh(mesh_path)
-    g = build_geometry(mesh, blocked_internal=blocked_internal)
+    g = build_geometry(mesh, blocked_internal=blocked_internal, wind_axis=wind_axis)
     n = mesh["n_cells"]
     cv = mesh["cell_volumes"]
     P, N = g["P"], g["N"]
@@ -181,7 +184,7 @@ def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
     outlet_m = btype == OUTLET
     wall_m = btype == WALL
     object_m = btype == OBJECT
-    U_in = np.array([U, 0.0, 0.0])
+    U_in = np.zeros(3); U_in[wind_axis] = U
 
     print(f"Mesh: {n} cells, {mesh['n_faces']} faces "
           f"(internal {len(P)}, boundary {len(btype)})")
@@ -400,8 +403,9 @@ if __name__ == "__main__":
     ap.add_argument("--mesh", type=str, default="processed_mesh.npz")
     ap.add_argument("--out", type=str, default="les_result.npz")
     ap.add_argument("--log_every", type=int, default=10)
+    ap.add_argument("--wind_axis", type=int, default=0, choices=[0, 1, 2])
     args = ap.parse_args()
     run(nu=args.nu, U=args.U, iters=args.iters, alpha_u=args.alpha_u,
         alpha_p=args.alpha_p, Cs=args.Cs, beta=args.beta, limiter=args.limiter,
         avg_last=args.avg_last, tol=args.tol, mesh_path=args.mesh,
-        out_path=args.out, log_every=args.log_every)
+        out_path=args.out, log_every=args.log_every, wind_axis=args.wind_axis)

@@ -16,11 +16,17 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from scipy.interpolate import griddata
 
 
+DOMAIN = np.array([10.0, 5.0, 5.0])
+
+
 def plot(path="fsi_result.npz", out="fsi_membrane_wind.png"):
     d = np.load(path, allow_pickle=True)
     c0 = d["mem_coords0"]; c = d["mem_coords"]; tris = d["triangles"]
     cc = d["cell_centroids"]; u = d["velocity"]; p = d["pressure"]
     hist = d["history"]; U = float(d["u_wind"])
+    w = int(d["wind_axis"]) if "wind_axis" in d.files else 0
+    a, b = [i for i in (0, 1, 2) if i != w]     # span axes; b is the slice normal
+    names = "xyz"
     defl = np.linalg.norm(c - c0, axis=1)
 
     fig = plt.figure(figsize=(16, 5.5))
@@ -33,29 +39,37 @@ def plot(path="fsi_result.npz", out="fsi_membrane_wind.png"):
     polys.set_array(defl[tris].mean(axis=1))
     polys.set_cmap("plasma")
     ax.add_collection3d(polys)
-    ax.quiver(3.2, 2.5, 2.5, 0.8, 0, 0, color="blue", lw=2)
-    ax.text(3.0, 2.5, 3.2, "wind", color="blue")
-    ax.set_xlim(3.5, 7); ax.set_ylim(1, 4); ax.set_zlim(1, 4)
-    ax.set_xlabel("x (wind)"); ax.set_ylabel("y"); ax.set_zlabel("z")
+    wvec = np.zeros(3); wvec[w] = 0.9
+    origin = DOMAIN * 0.5; origin[w] = DOMAIN[w] * 0.5 - 1.8
+    ax.quiver(*origin, *wvec, color="blue", lw=2)
+    ax.text(*(origin + np.array([0, 0, 0.6])), "wind", color="blue")
+    ax.set_xlabel(f"x{' (wind)' if w==0 else ''}")
+    ax.set_ylabel(f"y{' (wind)' if w==1 else ''}")
+    ax.set_zlabel(f"z{' (wind)' if w==2 else ''}")
     ax.set_title(f"Membrane: form-found (grey) vs\nwind-deflected (max {defl.max():.2f} m)")
+    allc = np.vstack([c0, c]); lo = allc.min(0) - 0.3; hi = allc.max(0) + 0.3
+    ax.set_xlim(lo[0], hi[0]); ax.set_ylim(lo[1], hi[1]); ax.set_zlim(lo[2], hi[2])
     ax.view_init(elev=18, azim=-70)
 
-    # (b) flow field on z ~ 2.5 slice
+    # (b) flow field on a slice; horizontal axis = wind (w), vertical = span axis a,
+    #     sliced at the mid of the other span axis b
     ax2 = fig.add_subplot(1, 3, 2)
-    sl = np.abs(cc[:, 2] - 2.5) < 0.25
-    x, y = cc[sl, 0], cc[sl, 1]
+    mid_b = DOMAIN[b] * 0.5
+    sl = np.abs(cc[:, b] - mid_b) < 0.25
+    hx, vy = cc[sl, w], cc[sl, a]
     umag = np.linalg.norm(u[sl], axis=1)
-    xi = np.linspace(1, 9, 320); yi = np.linspace(0.2, 4.8, 200)
+    xi = np.linspace(0.3, DOMAIN[w] - 0.3, 320)
+    yi = np.linspace(0.2, DOMAIN[a] - 0.2, 200)
     Xi, Yi = np.meshgrid(xi, yi)
-    Um = griddata((x, y), umag, (Xi, Yi), method="linear")
+    Um = griddata((hx, vy), umag, (Xi, Yi), method="linear")
     cf = ax2.contourf(Xi, Yi, Um, levels=40, cmap="turbo")
     fig.colorbar(cf, ax=ax2, label="|u| [m/s]")
-    # membrane trace near this slice
-    ms = np.abs(c[:, 2] - 2.5) < 0.25
-    ax2.scatter(c[ms, 0], c[ms, 1], s=8, c="white", edgecolors="k", linewidths=0.3)
-    ax2.set_title("Flow past deflected membrane (z=2.5 slice)")
-    ax2.set_xlabel("x [m]"); ax2.set_ylabel("y [m]"); ax2.set_aspect("equal")
-    ax2.set_xlim(1, 9); ax2.set_ylim(0.2, 4.8)
+    ms = np.abs(c[:, b] - mid_b) < 0.3
+    ax2.scatter(c[ms, w], c[ms, a], s=8, c="white", edgecolors="k", linewidths=0.3)
+    ax2.set_title(f"Flow past deflected membrane ({names[b]}={mid_b:.1f} slice)")
+    ax2.set_xlabel(f"{names[w]} [m] (wind ->)"); ax2.set_ylabel(f"{names[a]} [m]")
+    ax2.set_aspect("equal")
+    ax2.set_xlim(0.3, DOMAIN[w] - 0.3); ax2.set_ylim(0.2, DOMAIN[a] - 0.2)
 
     # (c) convergence
     ax3 = fig.add_subplot(1, 3, 3)

@@ -32,6 +32,9 @@ can be run directly without regenerating the mesh.
 - Notebook: run `LES_flow_past_sphere.ipynb` (imports `les_solver`).
 - FSI (CLI): `python fsi_membrane.py --n_fsi 6 --u_wind 1.0 --load_scale 1.0` then
   `python plot_fsi.py fsi_result.npz fsi_membrane_wind.png`; or run `FSI_membrane_wind.ipynb`.
+  Wind direction is set with `--wind_axis {0|1|2}` (0=x default, 1=y, 2=z); the same
+  `channel_mesh.npz` works for any axis (its refined block is central). `les_solver.run`
+  also accepts `wind_axis` (inlet/outlet auto-placed on the min/max faces of that axis).
 
 ## Cursor Cloud specific instructions
 
