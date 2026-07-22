@@ -164,7 +164,8 @@ def smagorinsky_nu_t(u, mesh, g, U_in, Cs=0.17):
 def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
         Cs=0.17, beta=1.0, limiter="vanleer", avg_last=None, tol=1e-4,
         mesh_path="processed_mesh.npz", out_path="les_result.npz", log_every=10,
-        blocked_internal=None, mesh=None, wind_axis=0):
+        blocked_internal=None, mesh=None, wind_axis=0,
+        callback=None, snap_every=0):
     t0 = time.time()
     if mesh is None:
         mesh = load_mesh(mesh_path)
@@ -353,6 +354,9 @@ def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
 
         if it > avg_start:
             u_acc += u; p_acc += p; n_acc += 1
+
+        if callback is not None and snap_every > 0 and (it == 1 or it % snap_every == 0):
+            callback(it, u.copy(), p.copy())
 
         # ---------------- diagnostics ----------------
         du_max = np.max(np.abs(u - u_prev)) / U       # steadiness metric

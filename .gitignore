@@ -10,3 +10,4 @@ channel_mesh.npz
 fsi_result.npz
 fsi_membrane_wind.png
 *.html
+*.gif
