@@ -62,7 +62,12 @@ def classify_boundaries(mesh):
     return b, btype
 
 
-def build_geometry(mesh):
+def build_geometry(mesh, blocked_internal=None):
+    """Build FV geometry. ``blocked_internal`` is an optional boolean mask over the
+    internal faces (in the order returned by ``np.where(neighbour != -1)``); those
+    faces are turned into a thin no-slip immersed baffle (a membrane): each becomes
+    a no-slip OBJECT wall for BOTH adjacent cells and is removed from the internal
+    (through-flow / pressure) coupling."""
     owner, neigh = mesh["owner"], mesh["neighbour"]
     cc, fc = mesh["cell_centroids"], mesh["face_centroids"]
     Sf, fa = mesh["face_area_vectors"], mesh["face_areas"]
@@ -75,11 +80,37 @@ def build_geometry(mesh):
     wP = dN / (dP + dN)
     a_geom = fa[internal] / d_len
 
-    g = {"internal": internal, "P": P, "N": N, "Sf_int": Sf[internal],
-         "wP": wP, "a_geom": a_geom}
     b, btype = classify_boundaries(mesh)
-    g.update({"b": b, "btype": btype, "b_owner": owner[b], "b_Sf": Sf[b],
-              "b_fa": fa[b], "b_db": np.linalg.norm(fc[b] - cc[owner[b]], axis=1)})
+    b_owner = owner[b]; b_Sf = Sf[b]; b_fa = fa[b]
+    b_db = np.linalg.norm(fc[b] - cc[b_owner], axis=1)
+
+    g = {}
+    if blocked_internal is not None and np.any(blocked_internal):
+        blk = np.asarray(blocked_internal, dtype=bool)
+        keep = ~blk
+        iP, iN = P[blk], N[blk]
+        iSf, ifc, ifa = Sf[internal][blk], fc[internal][blk], fa[internal][blk]
+        # membrane face map (for pressure-jump load transfer): normal points P->N
+        g["mem_P"], g["mem_N"] = iP, iN
+        g["mem_Sf"], g["mem_fc"], g["mem_fa"] = iSf.copy(), ifc, ifa
+        # append two no-slip OBJECT boundary faces per blocked face (one per side)
+        db_P = np.linalg.norm(ifc - cc[iP], axis=1)
+        db_N = np.linalg.norm(ifc - cc[iN], axis=1)
+        b_owner = np.concatenate([b_owner, iP, iN])
+        b_Sf = np.concatenate([b_Sf, iSf, -iSf])            # outward from each side
+        b_fa = np.concatenate([b_fa, ifa, ifa])
+        b_db = np.concatenate([b_db, db_P, db_N])
+        btype = np.concatenate([btype, np.full(2 * blk.sum(), OBJECT, dtype=np.int64)])
+        # restrict internal set to unblocked faces
+        P, N = P[keep], N[keep]
+        Sf_int = Sf[internal][keep]; wP = wP[keep]; a_geom = a_geom[keep]
+    else:
+        Sf_int = Sf[internal]
+
+    g.update({"internal": internal, "P": P, "N": N, "Sf_int": Sf_int,
+              "wP": wP, "a_geom": a_geom,
+              "b": b, "btype": btype, "b_owner": b_owner, "b_Sf": b_Sf,
+              "b_fa": b_fa, "b_db": b_db})
     g["b_a_geom"] = g["b_fa"] / g["b_db"]
     return g
 
@@ -129,10 +160,12 @@ def smagorinsky_nu_t(u, mesh, g, U_in, Cs=0.17):
 
 def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
         Cs=0.17, beta=1.0, limiter="vanleer", avg_last=None, tol=1e-4,
-        mesh_path="processed_mesh.npz", out_path="les_result.npz", log_every=10):
+        mesh_path="processed_mesh.npz", out_path="les_result.npz", log_every=10,
+        blocked_internal=None, mesh=None):
     t0 = time.time()
-    mesh = load_mesh(mesh_path)
-    g = build_geometry(mesh)
+    if mesh is None:
+        mesh = load_mesh(mesh_path)
+    g = build_geometry(mesh, blocked_internal=blocked_internal)
     n = mesh["n_cells"]
     cv = mesh["cell_volumes"]
     P, N = g["P"], g["N"]
