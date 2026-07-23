@@ -83,6 +83,103 @@ def plot_history(history, out_path: str | Path) -> None:
     plt.close(fig)
 
 
+def animate_membrane_3d(
+    frames_nodes,
+    elements: np.ndarray,
+    x0: np.ndarray,
+    out_path: str | Path,
+    times=None,
+    fps: int = 12,
+    title: str = "Tensile membrane flutter",
+) -> None:
+    """Animated 3-D GIF of the membrane moving/fluttering over time.
+
+    ``frames_nodes`` is a list of (n_nodes, 3) node-position arrays; the surface
+    is coloured by displacement magnitude from the reference shape ``x0``."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    allc = np.vstack(frames_nodes)
+    lo = allc.min(axis=0) - 0.05
+    hi = allc.max(axis=0) + 0.05
+    dmax = max(1e-6, max(np.linalg.norm(f - x0, axis=1).max() for f in frames_nodes))
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    def draw(k):
+        ax.clear()
+        c = frames_nodes[k]
+        d = np.linalg.norm(c - x0, axis=1)
+        coll = Poly3DCollection(c[elements], edgecolor="k", linewidths=0.15, alpha=0.9)
+        coll.set_array(d[elements].mean(axis=1))
+        coll.set_cmap("plasma")
+        coll.set_clim(0, dmax)
+        ax.add_collection3d(coll)
+        ax.set_xlim(lo[0], hi[0]); ax.set_ylim(lo[1], hi[1]); ax.set_zlim(lo[2], hi[2])
+        ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]"); ax.set_zlabel("z [m]")
+        t = f"  t={times[k]:.3f}s" if times is not None else f"  frame {k}"
+        ax.set_title(title + t)
+        ax.view_init(elev=22, azim=-60)
+
+    anim = FuncAnimation(fig, draw, frames=len(frames_nodes), blit=False)
+    anim.save(out_path, writer=PillowWriter(fps=fps))
+    plt.close(fig)
+
+
+def animate_flow_slice(
+    frames_speed,
+    grid_x: np.ndarray,
+    grid_z: np.ndarray,
+    membrane_traces,
+    out_path: str | Path,
+    times=None,
+    fps: int = 12,
+    title: str = "Flow past tensile membrane",
+) -> None:
+    """Animated GIF of the mid-plane speed field with the membrane cross-section.
+
+    ``frames_speed`` is a list of (nx, nz) speed slices; ``membrane_traces`` is a
+    list of (m, 2) arrays of membrane (x, z) points near the slice."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    vmax = float(np.clip(np.nanpercentile(frames_speed[-1], 99.0), 1e-6, None))
+    extent = [grid_x[0], grid_x[-1], grid_z[0], grid_z[-1]]
+
+    fig, ax = plt.subplots(figsize=(9, 4.8))
+    im = ax.imshow(frames_speed[0].T, origin="lower", extent=extent, cmap="turbo",
+                   vmin=0, vmax=vmax, aspect="equal", interpolation="bilinear")
+    fig.colorbar(im, ax=ax, label="|U| [m/s]")
+    tr0 = membrane_traces[0]
+    (line,) = ax.plot(tr0[:, 0], tr0[:, 1], "w.", ms=4, mec="k", mew=0.4)
+    ax.set_xlabel("x [m] (wind ->)"); ax.set_ylabel("z [m]")
+    ttl = ax.set_title(title)
+
+    def draw(k):
+        im.set_data(frames_speed[k].T)
+        tr = membrane_traces[k]
+        line.set_data(tr[:, 0], tr[:, 1])
+        t = f"  t={times[k]:.3f}s" if times is not None else f"  frame {k}"
+        ttl.set_text(title + t)
+        return [im, line, ttl]
+
+    anim = FuncAnimation(fig, draw, frames=len(frames_speed), blit=False)
+    anim.save(out_path, writer=PillowWriter(fps=fps))
+    plt.close(fig)
+
+
 def plot_membrane_3d(
     nodes: np.ndarray,
     elements: np.ndarray,
