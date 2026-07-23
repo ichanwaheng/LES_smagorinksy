@@ -50,19 +50,27 @@ def load_mesh(path="processed_mesh.npz"):
     }
 
 
-def classify_boundaries(mesh):
+def classify_boundaries(mesh, wind_axis=0):
+    """Inlet/outlet are the min/max faces along ``wind_axis``; other box faces are
+    free-slip walls; faces on the sphere (if present) are the no-slip object."""
     fc = mesh["face_centroids"]
     b = np.where(mesh["neighbour"] == -1)[0]
-    x = fc[b, 0]
+    coord = fc[b, wind_axis]
+    cmin, cmax = coord.min(), coord.max()
     dist_sphere = np.linalg.norm(fc[b] - SPHERE_CENTRE, axis=1)
     btype = np.full(len(b), WALL, dtype=np.int64)
-    btype[np.abs(x - 0.0) < 1e-2] = INLET
-    btype[np.abs(x - L) < 1e-2] = OUTLET
+    btype[np.abs(coord - cmin) < 1e-2] = INLET
+    btype[np.abs(coord - cmax) < 1e-2] = OUTLET
     btype[dist_sphere < (SPHERE_R + 0.3)] = OBJECT
     return b, btype
 
 
-def build_geometry(mesh):
+def build_geometry(mesh, blocked_internal=None, wind_axis=0):
+    """Build FV geometry. ``blocked_internal`` is an optional boolean mask over the
+    internal faces (in the order returned by ``np.where(neighbour != -1)``); those
+    faces are turned into a thin no-slip immersed baffle (a membrane): each becomes
+    a no-slip OBJECT wall for BOTH adjacent cells and is removed from the internal
+    (through-flow / pressure) coupling."""
     owner, neigh = mesh["owner"], mesh["neighbour"]
     cc, fc = mesh["cell_centroids"], mesh["face_centroids"]
     Sf, fa = mesh["face_area_vectors"], mesh["face_areas"]
@@ -75,11 +83,37 @@ def build_geometry(mesh):
     wP = dN / (dP + dN)
     a_geom = fa[internal] / d_len
 
-    g = {"internal": internal, "P": P, "N": N, "Sf_int": Sf[internal],
-         "wP": wP, "a_geom": a_geom}
-    b, btype = classify_boundaries(mesh)
-    g.update({"b": b, "btype": btype, "b_owner": owner[b], "b_Sf": Sf[b],
-              "b_fa": fa[b], "b_db": np.linalg.norm(fc[b] - cc[owner[b]], axis=1)})
+    b, btype = classify_boundaries(mesh, wind_axis=wind_axis)
+    b_owner = owner[b]; b_Sf = Sf[b]; b_fa = fa[b]
+    b_db = np.linalg.norm(fc[b] - cc[b_owner], axis=1)
+
+    g = {}
+    if blocked_internal is not None and np.any(blocked_internal):
+        blk = np.asarray(blocked_internal, dtype=bool)
+        keep = ~blk
+        iP, iN = P[blk], N[blk]
+        iSf, ifc, ifa = Sf[internal][blk], fc[internal][blk], fa[internal][blk]
+        # membrane face map (for pressure-jump load transfer): normal points P->N
+        g["mem_P"], g["mem_N"] = iP, iN
+        g["mem_Sf"], g["mem_fc"], g["mem_fa"] = iSf.copy(), ifc, ifa
+        # append two no-slip OBJECT boundary faces per blocked face (one per side)
+        db_P = np.linalg.norm(ifc - cc[iP], axis=1)
+        db_N = np.linalg.norm(ifc - cc[iN], axis=1)
+        b_owner = np.concatenate([b_owner, iP, iN])
+        b_Sf = np.concatenate([b_Sf, iSf, -iSf])            # outward from each side
+        b_fa = np.concatenate([b_fa, ifa, ifa])
+        b_db = np.concatenate([b_db, db_P, db_N])
+        btype = np.concatenate([btype, np.full(2 * blk.sum(), OBJECT, dtype=np.int64)])
+        # restrict internal set to unblocked faces
+        P, N = P[keep], N[keep]
+        Sf_int = Sf[internal][keep]; wP = wP[keep]; a_geom = a_geom[keep]
+    else:
+        Sf_int = Sf[internal]
+
+    g.update({"internal": internal, "P": P, "N": N, "Sf_int": Sf_int,
+              "wP": wP, "a_geom": a_geom,
+              "b": b, "btype": btype, "b_owner": b_owner, "b_Sf": b_Sf,
+              "b_fa": b_fa, "b_db": b_db})
     g["b_a_geom"] = g["b_fa"] / g["b_db"]
     return g
 
@@ -129,10 +163,13 @@ def smagorinsky_nu_t(u, mesh, g, U_in, Cs=0.17):
 
 def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
         Cs=0.17, beta=1.0, limiter="vanleer", avg_last=None, tol=1e-4,
-        mesh_path="processed_mesh.npz", out_path="les_result.npz", log_every=10):
+        mesh_path="processed_mesh.npz", out_path="les_result.npz", log_every=10,
+        blocked_internal=None, mesh=None, wind_axis=0,
+        callback=None, snap_every=0):
     t0 = time.time()
-    mesh = load_mesh(mesh_path)
-    g = build_geometry(mesh)
+    if mesh is None:
+        mesh = load_mesh(mesh_path)
+    g = build_geometry(mesh, blocked_internal=blocked_internal, wind_axis=wind_axis)
     n = mesh["n_cells"]
     cv = mesh["cell_volumes"]
     P, N = g["P"], g["N"]
@@ -148,7 +185,7 @@ def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
     outlet_m = btype == OUTLET
     wall_m = btype == WALL
     object_m = btype == OBJECT
-    U_in = np.array([U, 0.0, 0.0])
+    U_in = np.zeros(3); U_in[wind_axis] = U
 
     print(f"Mesh: {n} cells, {mesh['n_faces']} faces "
           f"(internal {len(P)}, boundary {len(btype)})")
@@ -318,6 +355,9 @@ def run(nu=0.02, U=1.0, rho=1.0, iters=400, alpha_u=0.7, alpha_p=0.3,
         if it > avg_start:
             u_acc += u; p_acc += p; n_acc += 1
 
+        if callback is not None and snap_every > 0 and (it == 1 or it % snap_every == 0):
+            callback(it, u.copy(), p.copy())
+
         # ---------------- diagnostics ----------------
         du_max = np.max(np.abs(u - u_prev)) / U       # steadiness metric
         if it % log_every == 0 or it == 1:
@@ -367,8 +407,9 @@ if __name__ == "__main__":
     ap.add_argument("--mesh", type=str, default="processed_mesh.npz")
     ap.add_argument("--out", type=str, default="les_result.npz")
     ap.add_argument("--log_every", type=int, default=10)
+    ap.add_argument("--wind_axis", type=int, default=0, choices=[0, 1, 2])
     args = ap.parse_args()
     run(nu=args.nu, U=args.U, iters=args.iters, alpha_u=args.alpha_u,
         alpha_p=args.alpha_p, Cs=args.Cs, beta=args.beta, limiter=args.limiter,
         avg_last=args.avg_last, tol=args.tol, mesh_path=args.mesh,
-        out_path=args.out, log_every=args.log_every)
+        out_path=args.out, log_every=args.log_every, wind_axis=args.wind_axis)

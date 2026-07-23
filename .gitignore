@@ -4,3 +4,10 @@ __pycache__/
 # regeneratable solver outputs / figures
 les_result.npz
 les_flow_past_sphere.png
+# regeneratable FSI mesh / outputs / figures
+channel.msh
+channel_mesh.npz
+fsi_result.npz
+fsi_membrane_wind.png
+*.html
+*.gif
