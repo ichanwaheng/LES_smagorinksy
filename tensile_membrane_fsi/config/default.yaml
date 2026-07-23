@@ -1,0 +1,60 @@
+# Tensile membrane structure under fluid flow — default simulation config
+
+simulation:
+  name: "membrane_fsi_demo"
+  output_dir: "output"
+  save_interval: 10
+  plot: true
+
+time:
+  dt: 0.002
+  t_end: 2.0
+  cfl_max: 0.5
+
+# Membrane geometry: rectangular sail / canopy in the xy-plane
+membrane:
+  length: 2.0          # span in x [m]
+  width: 1.5           # span in y [m]
+  nx: 24               # elements along length
+  ny: 18               # elements along width
+  thickness: 0.001     # [m]
+  density: 1200.0      # [kg/m^3]
+  youngs_modulus: 5.0e+8  # [Pa] fabric-like
+  poisson: 0.3
+  prestress: 5.0e+4     # isotropic prestress [Pa]
+  damping: 80.0        # Rayleigh-like viscous damping [N·s/m]
+  mass_scale: 80.0     # artificial mass scaling for explicit FSI time steps
+  # Fixed edges: left and right (supports at x=0 and x=L)
+  fixed_edges: ["left", "right"]
+
+# Fluid channel around / past the membrane
+fluid:
+  domain:
+    L: 8.0             # streamwise length [m]
+    W: 3.0             # width [m]
+    H: 2.5             # height [m]
+  nx: 48
+  ny: 24
+  nz: 20
+  rho: 1.225           # air [kg/m^3]
+  nu: 1.0e-3           # kinematic viscosity [m^2/s] (raised for coarse-grid stability)
+  U_inlet: 5.0         # inlet velocity [m/s]
+  # Membrane placement in fluid domain
+  membrane_x0: 2.0
+  membrane_y0: 0.75
+  membrane_z0: 1.0     # mounting height
+
+# FSI coupling (partitioned, serial staggered)
+fsi:
+  scheme: "serial_staggered"   # fluid → loads → membrane → mesh update
+  under_relaxation: 0.5
+  max_subiters: 2
+  residual_tol: 1.0e-3
+  load_scale: 0.25             # scale transferred loads (stabilises coarse FSI)
+  # Pressure coefficient mapping onto membrane faces
+  load_mode: "dynamic_pressure"  # dynamic_pressure | interpolated_field
+
+# LES Smagorinsky (optional SGS for fluid)
+les:
+  enabled: true
+  Cs: 0.17
