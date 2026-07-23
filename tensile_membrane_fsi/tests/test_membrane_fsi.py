@@ -48,7 +48,9 @@ def test_fluid_step():
     fluid = FluidSolver(grid, U_inlet=5.0, use_les=False)
     fluid.step(0.01)
     assert np.isfinite(fluid.state.u).all()
-    assert fluid.state.u[0].mean() == pytest.approx(5.0)
+    # inlet profile tapers to zero at walls; peak equals U_inlet
+    assert fluid.state.u[0].max() == pytest.approx(5.0, rel=0.05)
+    assert fluid.state.u[0].mean() > 0.5 * 5.0
 
 
 def test_fsi_smoke():

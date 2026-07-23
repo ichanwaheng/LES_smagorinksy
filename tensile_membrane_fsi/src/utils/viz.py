@@ -1,9 +1,9 @@
-"""Visualization helpers (matplotlib)."""
+"""Visualization helpers (matplotlib) + GIF animation of membrane flutter."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 
@@ -81,6 +81,109 @@ def plot_history(history, out_path: str | Path) -> None:
     fig.tight_layout()
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
+
+
+def render_flutter_frame(
+    nodes: np.ndarray,
+    elements: np.ndarray,
+    nodes0: np.ndarray,
+    speed_slice: np.ndarray,
+    grid_x: np.ndarray,
+    grid_z: np.ndarray,
+    time: float,
+    mesh_nx: int,
+    mesh_ny: int,
+    speed_max: float,
+    disp_max: float,
+    z_limits: tuple,
+):
+    """Render one animation frame → RGB PIL image.
+
+    Layout: top panel is the 3D membrane surface coloured by vertical
+    displacement; bottom panel is the mid-plane fluid speed slice (x–z)
+    with the membrane side profile overlaid.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import cm
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    from PIL import Image
+
+    fig = plt.figure(figsize=(7.2, 6.5), dpi=92)
+    ax3d = fig.add_subplot(2, 1, 1, projection="3d")
+    ax2d = fig.add_subplot(2, 1, 2)
+
+    # --- 3D membrane coloured by vertical displacement -------------------
+    dz = nodes[:, 2] - nodes0[:, 2]
+    tris = nodes[elements]
+    face_dz = dz[elements].mean(axis=1)
+    norm = plt.Normalize(vmin=-disp_max, vmax=disp_max)
+    colors = cm.coolwarm(norm(face_dz))
+    coll = Poly3DCollection(tris, facecolors=colors, edgecolor="#333333", linewidths=0.15)
+    ax3d.add_collection3d(coll)
+    ax3d.set_xlim(nodes0[:, 0].min() - 0.1, nodes0[:, 0].max() + 0.1)
+    ax3d.set_ylim(nodes0[:, 1].min() - 0.1, nodes0[:, 1].max() + 0.1)
+    ax3d.set_zlim(*z_limits)
+    ax3d.set_xlabel("x [m]")
+    ax3d.set_ylabel("y [m]")
+    ax3d.set_zlabel("z [m]")
+    ax3d.view_init(elev=22, azim=-60)
+    ax3d.set_title(f"Tensile membrane flutter   t = {time:5.2f} s")
+    mappable = cm.ScalarMappable(norm=norm, cmap="coolwarm")
+    fig.colorbar(mappable, ax=ax3d, shrink=0.55, pad=0.08, label="Δz [m]")
+
+    # --- fluid slice + membrane profile ----------------------------------
+    Xg, Zg = np.meshgrid(grid_x, grid_z, indexing="ij")
+    cf = ax2d.contourf(
+        Xg,
+        Zg,
+        np.clip(speed_slice, 0.0, speed_max),
+        levels=np.linspace(0.0, speed_max, 25),
+        cmap="viridis",
+    )
+    fig.colorbar(cf, ax=ax2d, label="|u| [m/s]")
+
+    # membrane side profiles: one polyline per spanwise node row
+    n_row = mesh_ny + 1
+    for j in range(n_row):
+        row = nodes[j::n_row]  # structured grid: vid(i, j) = i*(ny+1)+j
+        lw, alpha = (1.8, 1.0) if j == n_row // 2 else (0.7, 0.35)
+        ax2d.plot(row[:, 0], row[:, 2], color="white", lw=lw, alpha=alpha)
+
+    ax2d.set_xlabel("x [m]")
+    ax2d.set_ylabel("z [m]")
+    ax2d.set_title("Mid-plane fluid speed + membrane profile")
+    ax2d.set_aspect("equal", adjustable="box")
+
+    fig.tight_layout()
+    fig.canvas.draw()
+    img = Image.frombuffer(
+        "RGBA",
+        fig.canvas.get_width_height(),
+        fig.canvas.buffer_rgba(),
+    ).convert("RGB")
+    plt.close(fig)
+    return img
+
+
+def save_gif(frames: Sequence, out_path: str | Path, fps: int = 12) -> Path:
+    """Write a list of PIL images to an animated GIF."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not frames:
+        raise ValueError("no frames to write")
+    frames = list(frames)
+    frames[0].save(
+        out_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=int(1000 / max(fps, 1)),
+        loop=0,
+        optimize=True,
+    )
+    return out_path
 
 
 def plot_membrane_3d(
