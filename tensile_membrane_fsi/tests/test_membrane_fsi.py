@@ -53,6 +53,54 @@ def test_fluid_step():
     assert fluid.state.u[0].mean() > 0.5 * 5.0
 
 
+def test_gusty_inlet():
+    grid = FluidGrid(L=4, W=2, H=2, nx=8, ny=4, nz=4)
+    fluid = FluidSolver(grid, U_inlet=5.0, use_les=False, gust_amp=0.5, gust_freq=1.0)
+    # step to quarter gust period → sin(2π f t) = 1 → maximum fluctuation
+    for _ in range(25):
+        fluid.step(0.01)
+    assert np.isfinite(fluid.state.u).all()
+    assert np.abs(fluid.state.w[0]).max() > 0.1  # vertical gust present at inlet
+    assert fluid.state.u[0].max() > 5.0  # streamwise fluctuation above mean
+
+
+def test_pressure_jump_loads():
+    from src.fsi.load_transfer import pressure_jump_loads
+
+    grid = FluidGrid(L=4, W=2, H=2, nx=8, ny=4, nz=4)
+    fluid = FluidSolver(grid, U_inlet=5.0, use_les=False)
+    fluid.step(0.01)
+    mesh = build_rectangular_membrane(
+        length=1.0, width=0.5, nx=4, ny=3, origin=(1.5, 0.75, 1.0)
+    )
+    pressure, f_nodal = pressure_jump_loads(
+        fluid, mesh, mesh.nodes, rho=1.225, U_ref=5.0, offset=0.5
+    )
+    assert pressure.shape == (mesh.n_elements,)
+    assert f_nodal.shape == mesh.nodes.shape
+    assert np.isfinite(pressure).all()
+    assert np.isfinite(f_nodal).all()
+
+
+def test_flutter_frame_and_gif(tmp_path):
+    from src.utils.viz import render_flutter_frame, save_gif
+
+    mesh = build_rectangular_membrane(length=1.0, width=0.5, nx=4, ny=3)
+    speed = np.random.default_rng(0).random((8, 6))
+    gx = np.linspace(0, 4, 8)
+    gz = np.linspace(0, 2, 6)
+    frames = [
+        render_flutter_frame(
+            mesh.nodes, mesh.elements, mesh.nodes, speed, gx, gz,
+            time=0.1 * i, mesh_nx=4, mesh_ny=3,
+            speed_max=5.0, disp_max=0.3, z_limits=(-0.5, 0.5),
+        )
+        for i in range(2)
+    ]
+    gif = save_gif(frames, tmp_path / "test.gif", fps=5)
+    assert gif.exists() and gif.stat().st_size > 0
+
+
 def test_fsi_smoke():
     cfg = load_config(ROOT / "config" / "default.yaml")
     cfg["membrane"]["nx"] = 6

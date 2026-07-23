@@ -6,21 +6,30 @@ Python package for **fluid–structure interaction** of prestressed tensile memb
 This folder is self-contained and sits alongside the existing LES / PISO notebooks
 in the repository root.
 
+![Membrane flutter animation](media/membrane_flutter.gif)
+
+*Channel flow (LES) past a light tensile membrane with a gusty inflow — the
+membrane flutters under the unsteady aerodynamic lift. Generated with
+`examples/run_flutter_gif.py`.*
+
 ## What’s inside
 
 ```
 tensile_membrane_fsi/
 ├── config/default.yaml          # physics & numerics
+├── config/flutter.yaml          # flutter demo: soft membrane + gusty inflow
 ├── main.py                      # full FSI entry point
 ├── requirements.txt
+├── media/membrane_flutter.gif   # pre-rendered flutter animation
 ├── src/
 │   ├── membrane/                # CST membrane FEM + prestress / dynamics
 │   ├── fluid/                   # Cartesian NS + Smagorinsky LES + immersed membrane
 │   ├── fsi/                     # partitioned serial-staggered coupling
-│   └── utils/                   # YAML I/O, VTK/NPZ, plots
+│   └── utils/                   # YAML I/O, VTK/NPZ, plots, GIF animation
 ├── examples/
 │   ├── run_membrane_only.py     # structure-only gust response
 │   ├── run_fsi_demo.py          # coarse coupled demo
+│   ├── run_flutter_gif.py       # flow past membrane → flutter GIF
 │   └── generate_gmsh_channel.py # optional unstructured channel+membrane mesh
 ├── tests/
 └── output/                      # created at runtime
@@ -50,6 +59,9 @@ python examples/run_membrane_only.py
 # coarse FSI demo
 python examples/run_fsi_demo.py
 
+# flow past the membrane → flutter animation (writes output/flutter/membrane_flutter.gif)
+python examples/run_flutter_gif.py
+
 # full run from config
 python main.py -c config/default.yaml
 
@@ -62,10 +74,18 @@ python -m pytest tests/ -q
 Edit `config/default.yaml`:
 
 - `membrane.*` — span, mesh density, fabric E / ν / thickness / prestress, fixed edges
-- `fluid.*` — channel size, resolution, ρ, ν, inlet speed, membrane placement
-- `fsi.*` — under-relaxation, sub-iterations, load model (`dynamic_pressure` or `interpolated_field`)
+- `fluid.*` — channel size, resolution, ρ, ν, inlet speed, membrane placement;
+  optional `gust_amp` / `gust_freq` for an unsteady gusty inflow and `u_clip`
+  for the velocity sanitizer
+- `fsi.*` — under-relaxation, sub-iterations, load model (`dynamic_pressure`,
+  `pressure_jump`, or `interpolated_field`)
 - `les.*` — Smagorinsky `Cs`
 - `time.*` — `dt`, `t_end`
+
+For flutter, use `config/flutter.yaml`: a light, softly prestressed fabric with
+near-zero structural damping, a gusty inflow, and the `pressure_jump` load
+model, which computes the unsteady lift from the pressure difference sampled
+on the two sides of the membrane.
 
 ## Outputs
 
@@ -75,6 +95,7 @@ Written under `output/` (or `simulation.output_dir`):
 - `membrane_XXXXXX.vtk` — open in ParaView
 - `slice_XXXXXX.png` — mid-plane |u| with membrane outline
 - `history.csv` / `history.png` — displacement, KE, CFL, FSI residual
+- `membrane_flutter.gif` — animated flutter (from `examples/run_flutter_gif.py`)
 
 ## Notes / limits
 
