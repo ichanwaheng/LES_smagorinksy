@@ -20,13 +20,15 @@ The existing sphere package in `working/` is left unchanged.
 - Outer walls: free-slip
 - Membrane: **no-slip with wall velocity from the solid**
 
-## Run
+## Jupyter analysis (step-by-step)
 
 ```powershell
 cd membrane_fsi
 py -m pip install -r requirements.txt
-py run.py --quick
+py -m jupyter lab
 ```
+
+Then open `notebooks/run_membrane_fsi.ipynb` and run cells in order (Step 1 → Step 8).
 
 Outputs → `membrane_fsi/outputs/`:
 - `flow_past_membrane_midplane.png`
