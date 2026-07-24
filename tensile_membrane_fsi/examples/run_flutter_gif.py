@@ -26,8 +26,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.fsi.coupling import FSISimulation
-from src.utils.io import ensure_dir, load_config, save_history_csv
-from src.utils.viz import plot_history, render_flutter_frame, save_gif
+from src.utils.io import (
+    ensure_dir,
+    load_config,
+    save_history_csv,
+    save_snapshot,
+    write_membrane_vtk,
+)
+from src.utils.viz import (
+    plot_history,
+    plot_membrane_3d,
+    plot_membrane_and_slice,
+    render_flutter_frame,
+    save_gif,
+)
 
 
 def parse_args():
@@ -46,6 +58,12 @@ def parse_args():
         type=str,
         default=None,
         help="Output GIF path (default: <output_dir>/membrane_flutter.gif)",
+    )
+    p.add_argument(
+        "--snapshot-every",
+        type=int,
+        default=15,
+        help="Frames between saved NPZ/VTK/slice outputs (0 disables)",
     )
     return p.parse_args()
 
@@ -104,6 +122,36 @@ def main():
             f"disp={info['max_disp']:.3f} m  CFL={info['cfl']:.2f}  "
             f"[{walltime.time() - t0:6.1f}s wall]"
         )
+        # periodic full outputs: NPZ snapshot, membrane VTK, slice plot
+        if args.snapshot_every > 0 and (len(frames) - 1) % args.snapshot_every == 0:
+            save_snapshot(
+                out,
+                n,
+                info["time"],
+                simulation.membrane.state.x,
+                simulation.mesh.elements,
+                fluid_u=st.u,
+                fluid_v=st.v,
+                fluid_w=st.w,
+                fluid_p=st.p,
+                meta=info,
+            )
+            write_membrane_vtk(
+                out / f"membrane_{n:06d}.vtk",
+                simulation.membrane.state.x,
+                simulation.mesh.elements,
+                point_data={"velocity": simulation.membrane.state.v},
+            )
+            plot_membrane_and_slice(
+                simulation.membrane.state.x,
+                simulation.mesh.elements,
+                st.u,
+                simulation.grid.x,
+                simulation.grid.z,
+                j_slice,
+                out / f"slice_{n:06d}.png",
+                title=f"Membrane flutter  t={info['time']:.3f}s",
+            )
 
     print(f"[flutter] fluid {sim.grid.nx}x{sim.grid.ny}x{sim.grid.nz}, "
           f"membrane {mesh_nx}x{mesh_ny}, dt={sim.dt}, t_end={sim.t_end}")
@@ -111,6 +159,13 @@ def main():
 
     save_history_csv(out / "history.csv", history)
     plot_history(history, out / "history.png")
+    plot_membrane_3d(
+        sim.membrane.state.x,
+        sim.mesh.elements,
+        out / "membrane_final.png",
+        displacement=sim.membrane.state.x - nodes0,
+        title="Final membrane shape",
+    )
     save_gif(frames, gif_path, fps=args.fps)
     print(f"[flutter] {len(frames)} frames → {gif_path}")
     return 0

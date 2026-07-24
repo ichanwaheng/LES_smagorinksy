@@ -1,4 +1,6 @@
-output/
+# runtime outputs are ignored, except the committed flutter results
+output/*
+!output/flutter/
 __pycache__/
 *.pyc
 .pytest_cache/

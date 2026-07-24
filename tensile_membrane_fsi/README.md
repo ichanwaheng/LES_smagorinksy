@@ -97,6 +97,11 @@ Written under `output/` (or `simulation.output_dir`):
 - `history.csv` / `history.png` — displacement, KE, CFL, FSI residual
 - `membrane_flutter.gif` — animated flutter (from `examples/run_flutter_gif.py`)
 
+The results of the 6 s flutter run (`examples/run_flutter_gif.py` with
+`config/flutter.yaml`) are committed under `output/flutter/`: 11 NPZ
+snapshots and membrane VTK files (every 0.6 s), mid-plane slice plots,
+the displacement/energy history, the final membrane shape, and the GIF.
+
 ## Notes / limits
 
 - The built-in fluid solver uses a **uniform Cartesian grid** with an immersed membrane.
