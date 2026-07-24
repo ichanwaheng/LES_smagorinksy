@@ -13,8 +13,7 @@ time:
   t_end: 6.0
   cfl_max: 0.5
 
-# Light, softly prestressed fabric strip fixed at the upstream and
-# downstream edges (x = x0 and x = x0 + length) — free side edges.
+# Light, softly prestressed fabric panel clamped on all four edges.
 membrane:
   length: 2.0
   width: 1.5
@@ -22,12 +21,12 @@ membrane:
   ny: 12
   thickness: 0.0005      # [m] light fabric
   density: 800.0         # [kg/m^3]
-  youngs_modulus: 1.0e+6 # [Pa] very soft fabric
+  youngs_modulus: 5.0e+5 # [Pa] very soft fabric
   poisson: 0.3
   prestress: 1.0e+4      # [Pa] → N_pre = 5 N/m (low tension → flutter)
   damping: 0.02          # near-undamped so oscillations persist
   mass_scale: 2.0
-  fixed_edges: ["left", "right"]
+  fixed_edges: ["left", "right", "bottom", "top"]
 
 fluid:
   domain:
@@ -54,7 +53,7 @@ fsi:
   under_relaxation: 0.7
   max_subiters: 1
   residual_tol: 1.0e-4
-  load_scale: 2.5              # amplify Δp response for a clearly visible flutter
+  load_scale: 6.0              # amplify Δp response for a clearly visible flutter
   load_mode: "pressure_jump"   # unsteady lift from Δp across the membrane
 
 les:

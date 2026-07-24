@@ -24,8 +24,8 @@ membrane:
   prestress: 5.0e+4     # isotropic prestress [Pa]
   damping: 80.0        # Rayleigh-like viscous damping [N·s/m]
   mass_scale: 80.0     # artificial mass scaling for explicit FSI time steps
-  # Fixed edges: left and right (supports at x=0 and x=L)
-  fixed_edges: ["left", "right"]
+  # Fixed edges: all four sides clamped
+  fixed_edges: ["left", "right", "bottom", "top"]
 
 # Fluid channel around / past the membrane
 fluid:

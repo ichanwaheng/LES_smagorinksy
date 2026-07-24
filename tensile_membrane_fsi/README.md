@@ -82,10 +82,10 @@ Edit `config/default.yaml`:
 - `les.*` — Smagorinsky `Cs`
 - `time.*` — `dt`, `t_end`
 
-For flutter, use `config/flutter.yaml`: a light, softly prestressed fabric with
-near-zero structural damping, a gusty inflow, and the `pressure_jump` load
-model, which computes the unsteady lift from the pressure difference sampled
-on the two sides of the membrane.
+For flutter, use `config/flutter.yaml`: a light, softly prestressed fabric
+clamped on all four edges, with near-zero structural damping, a gusty inflow,
+and the `pressure_jump` load model, which computes the unsteady lift from the
+pressure difference sampled on the two sides of the membrane.
 
 ## Outputs
 

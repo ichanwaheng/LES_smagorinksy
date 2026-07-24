@@ -87,9 +87,9 @@ def main():
     gust = float(cfg["fluid"].get("gust_amp", 0.0))
     speed_max = 1.6 * U * (1.0 + gust)
     z0 = float(cfg["fluid"]["membrane_z0"])
-    z_span = 0.25 * float(cfg["fluid"]["domain"]["H"])
+    z_span = 0.16 * float(cfg["fluid"]["domain"]["H"])
     z_limits = (z0 - z_span, z0 + z_span)
-    disp_max = 0.3  # colour scale for Δz [m]
+    disp_max = 0.15  # colour scale for Δz [m]
 
     frames = []
     t0 = walltime.time()
