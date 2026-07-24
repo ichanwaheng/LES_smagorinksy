@@ -58,6 +58,40 @@ def dynamic_pressure_loads(
     return pressure, f_nodal
 
 
+def pressure_jump_loads(
+    fluid: FluidSolver,
+    mesh: MembraneMesh,
+    nodes: np.ndarray,
+    rho: float,
+    U_ref: float,
+    offset: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Membrane lift from the pressure difference between its two sides.
+
+    Samples fluid pressure at ``centroid ± offset * normal`` (just outside
+    the immersed-boundary band) and applies
+        Δp = p(-n side) - p(+n side)
+    as a load along +normal. This captures the unsteady lift on a membrane
+    aligned with the flow, which the incidence/dynamic-pressure model misses.
+    """
+    centroids = element_centroids(nodes, mesh.elements)
+    areas, normals = element_areas_normals(nodes, mesh.elements)
+    _, p_plus = fluid.sample_at(centroids + offset * normals)
+    _, p_minus = fluid.sample_at(centroids - offset * normals)
+    pressure = p_minus - p_plus
+
+    q_ref = 0.5 * rho * max(U_ref, 1e-6) ** 2
+    pressure = np.clip(pressure, -5 * q_ref, 5 * q_ref)
+
+    f_nodal = np.zeros_like(nodes)
+    for e, (a, b, c) in enumerate(mesh.elements):
+        Fe = (pressure[e] * areas[e] / 3.0) * normals[e]
+        f_nodal[a] += Fe
+        f_nodal[b] += Fe
+        f_nodal[c] += Fe
+    return pressure, f_nodal
+
+
 def interpolated_field_loads(
     fluid: FluidSolver,
     mesh: MembraneMesh,

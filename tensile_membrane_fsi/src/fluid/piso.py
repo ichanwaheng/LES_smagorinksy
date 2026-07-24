@@ -83,6 +83,8 @@ class FluidSolver:
         use_les: bool = True,
         Cs: float = 0.17,
         u_clip: Optional[float] = None,
+        gust_amp: float = 0.0,
+        gust_freq: float = 1.0,
     ) -> None:
         self.grid = grid
         self.rho = float(rho)
@@ -91,6 +93,16 @@ class FluidSolver:
         self.use_les = bool(use_les)
         self.Cs = float(Cs)
         self.u_clip = float(u_clip) if u_clip is not None else 5.0 * abs(self.U_inlet)
+        # Unsteady gusty inflow: sinusoidal streamwise + vertical velocity
+        # fluctuations (fraction of U_inlet). Drives membrane flutter.
+        self.gust_amp = float(gust_amp)
+        self.gust_freq = float(gust_freq)
+        self.t = 0.0
+        # inlet profile tapering to zero at the no-slip walls; avoids the
+        # incompatible inlet/wall corner that seeds velocity spikes
+        py = np.sin(np.pi * (np.arange(grid.ny) + 0.5) / grid.ny)
+        pz = np.sin(np.pi * (np.arange(grid.nz) + 0.5) / grid.nz)
+        self._inlet_profile = (py[:, None] * pz[None, :]) ** 0.25
 
         sh = grid.shape
         self.state = FluidState(
@@ -100,7 +112,7 @@ class FluidSolver:
             p=np.zeros(sh),
             nu_eff=np.full(sh, self.nu),
         )
-        self.state.u[0, :, :] = self.U_inlet
+        self.state.u[0, :, :] = self.U_inlet * self._inlet_profile
         self._obstacle = np.zeros(sh, dtype=bool)
         self._u_solid = np.zeros(sh)
         self._v_solid = np.zeros(sh)
@@ -131,10 +143,22 @@ class FluidSolver:
         u[-1, :, :] = u[-2, :, :]
         v[-1, :, :] = v[-2, :, :]
         w[-1, :, :] = w[-2, :, :]
-        # inlet last
-        u[0, :, :] = self.U_inlet
+        # inlet last (optionally gusty: sinusoidal streamwise + vertical
+        # fluctuation with a slower phase-shifted harmonic so the forcing
+        # is not perfectly periodic)
+        if self.gust_amp > 0.0:
+            om = 2.0 * np.pi * self.gust_freq
+            u_in = self.U_inlet * (1.0 + 0.5 * self.gust_amp * np.sin(om * self.t))
+            w_in = self.U_inlet * self.gust_amp * (
+                np.sin(om * self.t)
+                + 0.4 * np.sin(0.37 * om * self.t + 1.3)
+            )
+        else:
+            u_in = self.U_inlet
+            w_in = 0.0
+        u[0, :, :] = u_in * self._inlet_profile
         v[0, :, :] = 0.0
-        w[0, :, :] = 0.0
+        w[0, :, :] = w_in * self._inlet_profile
         # immersed membrane (soft: only force if mask)
         m = self._obstacle
         if np.any(m):
@@ -236,6 +260,9 @@ class FluidSolver:
             self._lap_cache = self._build_laplacian()
         rhs = (self.rho / max(dt, 1e-12)) * div.ravel(order="C")
         rhs = np.nan_to_num(rhs, nan=0.0, posinf=0.0, neginf=0.0)
+        # enforce compatibility of the Neumann problem (zero-mean RHS) so the
+        # global mass imbalance is not dumped at the pinned cell
+        rhs -= rhs.mean()
         rhs[0] = 0.0
         p_flat, info = cg(self._lap_cache, rhs, rtol=1e-5, maxiter=300)
         if info != 0 or not np.all(np.isfinite(p_flat)):
@@ -247,6 +274,7 @@ class FluidSolver:
         return p
 
     def step(self, dt: float) -> FluidState:
+        self.t += dt
         g = self.grid
         u, v, w = self.state.u, self.state.v, self.state.w
         u, v, w = self._sanitize(u, v, w)
@@ -258,6 +286,10 @@ class FluidSolver:
             nu_eff = np.full(g.shape, self.nu)
         # floor viscosity for stability on coarse grids
         nu_eff = np.maximum(nu_eff, self.nu)
+        # cap by the explicit-diffusion stability limit so a large SGS
+        # viscosity cannot blow up the forward-Euler viscous update
+        nu_stab = 0.2 / (dt * (1.0 / g.dx**2 + 1.0 / g.dy**2 + 1.0 / g.dz**2))
+        nu_eff = np.minimum(nu_eff, max(nu_stab, self.nu))
 
         u_s = self._advect_diffuse(u, u, v, w, nu_eff, dt)
         v_s = self._advect_diffuse(v, u, v, w, nu_eff, dt)

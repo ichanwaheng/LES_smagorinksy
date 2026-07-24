@@ -1,0 +1,61 @@
+# Membrane flutter demo — light fabric, low damping, gusty inflow.
+# Used by examples/run_flutter_gif.py to produce an animated GIF of the
+# membrane fluttering in the channel flow.
+
+simulation:
+  name: "membrane_flutter"
+  output_dir: "output/flutter"
+  save_interval: 20       # fluid steps between animation frames
+  plot: false
+
+time:
+  dt: 0.002
+  t_end: 6.0
+  cfl_max: 0.5
+
+# Light, softly prestressed fabric panel clamped on all four edges.
+membrane:
+  length: 2.0
+  width: 1.5
+  nx: 16
+  ny: 12
+  thickness: 0.0005      # [m] light fabric
+  density: 800.0         # [kg/m^3]
+  youngs_modulus: 5.0e+5 # [Pa] very soft fabric
+  poisson: 0.3
+  prestress: 1.0e+4      # [Pa] → N_pre = 5 N/m (low tension → flutter)
+  damping: 0.02          # near-undamped so oscillations persist
+  mass_scale: 2.0
+  fixed_edges: ["left", "right", "bottom", "top"]
+
+fluid:
+  domain:
+    L: 8.0
+    W: 3.0
+    H: 2.5
+  nx: 56
+  ny: 16
+  nz: 28
+  rho: 1.225
+  nu: 2.0e-3
+  U_inlet: 6.0
+  u_clip: 15.0           # sanitizer clip [m/s]; keep clip*dt/h < 1 so spikes decay
+  # Gusty inflow: sinusoidal streamwise/vertical velocity fluctuation
+  # (fraction of U_inlet) near the membrane's first natural frequency.
+  gust_amp: 0.6
+  gust_freq: 0.5         # [Hz] slow strong gusts → large quasi-static swings
+  membrane_x0: 2.0
+  membrane_y0: 0.75
+  membrane_z0: 1.25
+
+fsi:
+  scheme: "serial_staggered"
+  under_relaxation: 0.7
+  max_subiters: 1
+  residual_tol: 1.0e-4
+  load_scale: 6.0              # amplify Δp response for a clearly visible flutter
+  load_mode: "pressure_jump"   # unsteady lift from Δp across the membrane
+
+les:
+  enabled: true
+  Cs: 0.17

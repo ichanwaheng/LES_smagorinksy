@@ -14,7 +14,11 @@ from ..membrane.geometry import build_rectangular_membrane
 from ..membrane.materials import MembraneMaterial
 from ..membrane.prestress import apply_isotropic_prestress, initial_sag_shape
 from ..membrane.solver import MembraneSolver
-from .load_transfer import dynamic_pressure_loads, interpolated_field_loads
+from .load_transfer import (
+    dynamic_pressure_loads,
+    interpolated_field_loads,
+    pressure_jump_loads,
+)
 from .mesh_update import under_relax, update_immersed_boundary
 
 
@@ -99,6 +103,9 @@ class FSISimulation:
             U_inlet=float(fcfg["U_inlet"]),
             use_les=les.get("enabled", True),
             Cs=float(les.get("Cs", 0.17)),
+            gust_amp=float(fcfg.get("gust_amp", 0.0)),
+            gust_freq=float(fcfg.get("gust_freq", 1.0)),
+            u_clip=float(fcfg["u_clip"]) if "u_clip" in fcfg else None,
         )
         update_immersed_boundary(
             self.fluid, self.grid, self.mesh, self.membrane.state.x, self.membrane.state.v
@@ -119,6 +126,17 @@ class FSISimulation:
         if self.load_mode == "interpolated_field":
             pressure, f_nodal = interpolated_field_loads(
                 self.fluid, self.mesh, self.membrane.state.x
+            )
+        elif self.load_mode == "pressure_jump":
+            # probe just outside the immersed-boundary band (1.5 dz thick)
+            offset = 3.0 * self.grid.dz
+            pressure, f_nodal = pressure_jump_loads(
+                self.fluid,
+                self.mesh,
+                self.membrane.state.x,
+                rho=float(self.cfg["fluid"]["rho"]),
+                U_ref=float(self.cfg["fluid"]["U_inlet"]),
+                offset=offset,
             )
         else:
             pressure, f_nodal = dynamic_pressure_loads(
