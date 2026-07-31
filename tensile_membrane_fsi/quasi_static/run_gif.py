@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Quasi-static UWM + PISO/LES over a time interval → animated GIF.
+"""Quasi-static UWM + PISO/LES over a time interval → animated GIFs.
 
 Advances the fluid in time; at each sample the membrane form is updated
-with the Updated Weight Method under the current pressure, then a frame
-is rendered (3D membrane + mid-plane |u| slice).
+with the Updated Weight Method under the current pressure, then frames
+are rendered (3D membrane + mid-plane |u| slice).
+
+Writes **two** GIFs by default:
+  - ``membrane_quasi_static_original.gif`` — physical (unamplified) deflection
+  - ``membrane_quasi_static_amplified.gif`` — visually scaled deflection
 
     python quasi_static/run_gif.py --quick
     python quasi_static/run_gif.py --t-end 1.0 --fps 8
-    python quasi_static/run_gif.py --out quasi_static/output/membrane_qs.gif
+    python quasi_static/run_gif.py --out-dir quasi_static/output
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ from excel_export import DeformationRecorder
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Quasi-static membrane FSI → animated GIF over a time interval"
+        description="Quasi-static membrane FSI → original + amplified GIFs"
     )
     p.add_argument(
         "-c",
@@ -56,10 +60,17 @@ def parse_args():
     )
     p.add_argument("--fps", type=int, default=8, help="GIF frames per second")
     p.add_argument(
+        "--out-dir",
+        type=str,
+        default=None,
+        help="Directory for GIF outputs (default: config simulation.output_dir)",
+    )
+    p.add_argument(
         "--out",
         type=str,
         default=None,
-        help="Output GIF path (default: <output_dir>/membrane_quasi_static.gif)",
+        help="Deprecated alias: if set, amplified GIF path; original is "
+        "written beside it as *_original.gif",
     )
     p.add_argument(
         "--quick",
@@ -117,6 +128,38 @@ def _auto_disp_scale(nodes: np.ndarray, z_ref: float, target_amp: float) -> floa
     return float(target_amp) / max(phys, 1e-9)
 
 
+def _render_frame(
+    nodes_plot: np.ndarray,
+    elements: np.ndarray,
+    nodes_flat: np.ndarray,
+    speed: np.ndarray,
+    grid_x: np.ndarray,
+    grid_z: np.ndarray,
+    time: float,
+    mesh_nx: int,
+    mesh_ny: int,
+    speed_max: float,
+    disp_max: float,
+    z_limits: tuple,
+    title: str,
+):
+    return render_flutter_frame(
+        nodes_plot,
+        elements,
+        nodes_flat,
+        speed,
+        grid_x,
+        grid_z,
+        time,
+        mesh_nx,
+        mesh_ny,
+        speed_max,
+        disp_max,
+        z_limits,
+        title=title,
+    )
+
+
 def main():
     args = parse_args()
     cfg = load_config(args.config)
@@ -133,21 +176,30 @@ def main():
         cfg["quasi_static"]["fluid_substeps"] = 4
         cfg["quasi_static"]["max_iters"] = 40
         cfg["quasi_static"]["load_scale"] = 1.5
-        cfg["quasi_static"]["shape_tol"] = 0.0  # do not early-stop on shape
+        cfg["quasi_static"]["shape_tol"] = 0.0
         cfg["les"]["enabled"] = True
 
     if args.t_end is not None:
         cfg["time"]["t_end"] = args.t_end
 
     cfg.setdefault("quasi_static", {})
-    # ensure we do not stop after first converged shape when making a movie
     cfg["quasi_static"]["shape_tol"] = 0.0
 
-    out = ensure_dir(ROOT / cfg["simulation"].get("output_dir", "quasi_static/output"))
-    gif_path = Path(args.out) if args.out else out / "membrane_quasi_static.gif"
+    out = ensure_dir(
+        Path(args.out_dir)
+        if args.out_dir
+        else ROOT / cfg["simulation"].get("output_dir", "quasi_static/output")
+    )
+    if args.out:
+        amp_gif_path = Path(args.out)
+        orig_gif_path = amp_gif_path.with_name(
+            amp_gif_path.stem + "_original" + amp_gif_path.suffix
+        )
+    else:
+        orig_gif_path = out / "membrane_quasi_static_original.gif"
+        amp_gif_path = out / "membrane_quasi_static_amplified.gif"
 
     sim = QuasiStaticFSI(cfg)
-    # flat mounting plane (supports); used as the amplification reference
     z0 = float(cfg["fluid"]["membrane_z0"])
     nodes_flat = sim.x_bc.copy()
     nodes_flat[:, 2] = z0
@@ -160,7 +212,6 @@ def main():
         else cfg.get("quasi_static", {}).get("target_amp", 0.4 * span)
     )
 
-    # choose scale from current form (updated again on first frame)
     if args.disp_scale is not None:
         disp_scale = float(args.disp_scale)
     elif cfg.get("quasi_static", {}).get("disp_scale", None) not in (None, "auto"):
@@ -170,43 +221,58 @@ def main():
 
     U = float(cfg["fluid"]["U_inlet"])
     speed_max = 1.6 * U
-    disp_max = max(0.15, 1.15 * target_amp)
-    z_span = max(1.25 * disp_max, 0.35)
-    z_limits = (z0 - z_span, z0 + z_span)
+    # Physical GIF: tight window around the true membrane motion
+    phys_disp_max = max(
+        0.02,
+        1.5 * float(np.max(np.abs(sim.nodes[:, 2] - z0))) + 1e-3,
+    )
+    phys_z_span = max(1.5 * phys_disp_max, 0.08)
+    phys_z_limits = (z0 - phys_z_span, z0 + phys_z_span)
 
-    frames = []
+    # Amplified GIF scales
+    amp_disp_max = max(0.15, 1.15 * target_amp)
+    amp_z_span = max(1.25 * amp_disp_max, 0.35)
+    amp_z_limits = (z0 - amp_z_span, z0 + amp_z_span)
+
+    frames_orig = []
+    frames_amp = []
     t0 = walltime.time()
     t_end = float(cfg["time"]["t_end"])
     recorder = DeformationRecorder(reference_nodes=nodes_flat, fixed=sim.mesh.fixed)
 
     def on_frame(simulation, info, k):
-        nonlocal disp_scale, disp_max, z_limits
+        nonlocal disp_scale, phys_disp_max, phys_z_limits, amp_disp_max, amp_z_limits
         st = simulation.fluid.state
         speed = np.sqrt(
             st.u[:, j_slice, :] ** 2
             + st.v[:, j_slice, :] ** 2
             + st.w[:, j_slice, :] ** 2
         )
-        # Auto-scale from true out-of-plane deflection about the flat plane
-        # (not about the sagged initial guess — that hid the pressure shape).
         if args.disp_scale is None and cfg.get("quasi_static", {}).get(
             "disp_scale", "auto"
         ) in (None, "auto"):
             disp_scale = _auto_disp_scale(simulation.nodes, z0, target_amp)
-        nodes_vis = _amplify_z(simulation.nodes, z0, disp_scale)
-        vis_peak = float(np.max(np.abs(nodes_vis[:, 2] - z0)))
-        disp_max = max(0.15, 1.15 * vis_peak, 1.15 * target_amp)
-        z_span_now = max(1.25 * disp_max, 0.35)
-        z_limits = (z0 - z_span_now, z0 + z_span_now)
-        title = f"Quasi-static UWM membrane  (×{disp_scale:.0f} Δz vs flat)"
+
+        phys_peak = float(np.max(np.abs(simulation.nodes[:, 2] - z0)))
+        phys_disp_max = max(0.02, 1.5 * phys_peak + 1e-3, phys_disp_max)
+        phys_z_span_now = max(1.5 * phys_disp_max, 0.08)
+        phys_z_limits = (z0 - phys_z_span_now, z0 + phys_z_span_now)
+
+        nodes_amp = _amplify_z(simulation.nodes, z0, disp_scale)
+        vis_peak = float(np.max(np.abs(nodes_amp[:, 2] - z0)))
+        amp_disp_max = max(0.15, 1.15 * vis_peak, 1.15 * target_amp)
+        amp_z_span_now = max(1.25 * amp_disp_max, 0.35)
+        amp_z_limits = (z0 - amp_z_span_now, z0 + amp_z_span_now)
+
         recorder.record(
             time=float(info["time"]),
             nodes=simulation.nodes,
             iteration=int(info["iteration"]),
         )
-        frames.append(
-            render_flutter_frame(
-                nodes_vis,
+
+        frames_orig.append(
+            _render_frame(
+                simulation.nodes,
                 simulation.mesh.elements,
                 nodes_flat,
                 speed,
@@ -216,20 +282,36 @@ def main():
                 mesh_nx,
                 mesh_ny,
                 speed_max,
-                disp_max,
-                z_limits,
-                title=title,
+                phys_disp_max,
+                phys_z_limits,
+                title="Quasi-static UWM membrane  (original Δz)",
             )
         )
-        phys_peak = float(np.max(np.abs(simulation.nodes[:, 2] - z0)))
+        frames_amp.append(
+            _render_frame(
+                nodes_amp,
+                simulation.mesh.elements,
+                nodes_flat,
+                speed,
+                simulation.grid.x,
+                simulation.grid.z,
+                info["time"],
+                mesh_nx,
+                mesh_ny,
+                speed_max,
+                amp_disp_max,
+                amp_z_limits,
+                title=f"Quasi-static UWM membrane  (×{disp_scale:.0f} Δz vs flat)",
+            )
+        )
         print(
-            f"  frame {len(frames):3d}  t={info['time']:6.3f}s  "
+            f"  frame {len(frames_orig):3d}  t={info['time']:6.3f}s  "
             f"Δz_phys={phys_peak:.4e} m  "
             f"×{disp_scale:.0f} → {vis_peak:.3f} m  "
             f"|p|_max={info['pressure_max']:.2f} Pa  "
             f"[{walltime.time() - t0:6.1f}s wall]"
         )
-        if args.snapshot_every > 0 and (len(frames) - 1) % args.snapshot_every == 0:
+        if args.snapshot_every > 0 and (len(frames_orig) - 1) % args.snapshot_every == 0:
             save_snapshot(
                 out,
                 step=int(info["iteration"]),
@@ -279,7 +361,6 @@ def main():
                 "cfl",
             ]
         )
-        # rebuild time column from iteration index * dt_block
         dt_block = sim.fluid_substeps * sim.dt
         for i in range(len(hist.iteration)):
             w.writerow(
@@ -312,10 +393,20 @@ def main():
         title="Final quasi-static UWM form",
     )
 
-    if not frames:
+    if not frames_orig:
         raise SystemExit("no frames recorded — check t_end / fluid_substeps")
-    save_gif(frames, gif_path, fps=args.fps)
-    print(f"[QS-GIF] {len(frames)} frames → {gif_path}")
+    save_gif(frames_orig, orig_gif_path, fps=args.fps)
+    save_gif(frames_amp, amp_gif_path, fps=args.fps)
+    print(f"[QS-GIF] {len(frames_orig)} frames → {orig_gif_path}  (original)")
+    print(f"[QS-GIF] {len(frames_amp)} frames → {amp_gif_path}  (amplified)")
+
+    # keep legacy filename as a copy of the amplified GIF for older docs/links
+    legacy = out / "membrane_quasi_static.gif"
+    if amp_gif_path.resolve() != legacy.resolve():
+        try:
+            legacy.write_bytes(amp_gif_path.read_bytes())
+        except OSError:
+            pass
 
     if not args.no_excel:
         excel_path = (
@@ -323,7 +414,6 @@ def main():
             if args.excel
             else out / "membrane_deformations.xlsx"
         )
-        # per-step sheets are handy for short runs; skip if many frames
         per_step = len(recorder.times) <= 40
         xlsx = recorder.write_xlsx(excel_path, per_step_sheets=per_step)
         print(
