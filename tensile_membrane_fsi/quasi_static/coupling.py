@@ -122,6 +122,7 @@ class QuasiStaticFSI:
             gust_amp=float(fcfg.get("gust_amp", 0.0)),
             gust_freq=float(fcfg.get("gust_freq", 1.0)),
             u_clip=float(fcfg["u_clip"]) if "u_clip" in fcfg else None,
+            n_correctors=int(les.get("piso_correctors", fcfg.get("piso_correctors", 2))),
         )
         update_immersed_boundary(
             self.fluid,

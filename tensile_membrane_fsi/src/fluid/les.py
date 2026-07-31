@@ -1,4 +1,8 @@
-"""Smagorinsky LES eddy viscosity on a Cartesian grid."""
+"""Smagorinsky LES eddy viscosity on a Cartesian grid.
+
+Used as the viscous discretisation step *before* the PISO pressure–velocity
+coupling: ν_eff = ν + (C_s Δ)^2 |S| enters the momentum residual H(u).
+"""
 
 from __future__ import annotations
 
@@ -21,7 +25,6 @@ def smagorinsky_viscosity(
     ν_t = (Cs Δ)^2 |S|.
     """
     dx, dy, dz = grid.dx, grid.dy, grid.dz
-    # central differences with Neumann at boundaries
     dudx = np.gradient(u, dx, axis=0, edge_order=1)
     dudy = np.gradient(u, dy, axis=1, edge_order=1)
     dudz = np.gradient(u, dz, axis=2, edge_order=1)

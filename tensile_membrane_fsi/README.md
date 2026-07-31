@@ -47,7 +47,7 @@ tensile_membrane_fsi/
 |------|--------|
 | Membrane (transient) | Constant-strain triangles, isotropic prestress + plane-stress elasticity, explicit central-difference dynamics |
 | Membrane (quasi-static) | Updated Weight Method form updates under prestress + fluid nodal loads (no mass/damping) |
-| Fluid | 3D incompressible Navier–Stokes, fractional-step / PISO-like projection, optional Smagorinsky LES |
+| Fluid | 3D incompressible Navier–Stokes: Smagorinsky LES discretisation, then Issa **PISO** (predictor + N pressure correctors) |
 | Coupling | Serial staggered: fluid → dynamic pressure loads → membrane → immersed-boundary update |
 | IB | Thin-band immersed membrane in the Cartesian fluid grid |
 

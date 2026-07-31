@@ -37,7 +37,7 @@ class FSISimulation:
     Loop per time step
     ------------------
     1. Update immersed boundary from membrane position/velocity
-    2. Advance fluid (PISO / fractional step)
+    2. Advance fluid (PISO after Smagorinsky LES discretisation)
     3. Transfer pressure / dynamic loads → membrane nodes
     4. Advance membrane dynamics
     5. Optional under-relaxed sub-iterations
@@ -106,6 +106,7 @@ class FSISimulation:
             gust_amp=float(fcfg.get("gust_amp", 0.0)),
             gust_freq=float(fcfg.get("gust_freq", 1.0)),
             u_clip=float(fcfg["u_clip"]) if "u_clip" in fcfg else None,
+            n_correctors=int(les.get("piso_correctors", fcfg.get("piso_correctors", 2))),
         )
         update_immersed_boundary(
             self.fluid, self.grid, self.mesh, self.membrane.state.x, self.membrane.state.v

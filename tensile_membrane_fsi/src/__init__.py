@@ -4,7 +4,7 @@ Tensile Membrane Structures under Fluid Flow (FSI)
 Package layout
 --------------
 membrane/  – prestressed membrane FEM (dynamic relaxation / Newmark)
-fluid/     – incompressible NS on a Cartesian staggered grid (PISO-like)
+fluid/     – incompressible NS: Smagorinsky LES + Issa PISO
 fsi/       – partitioned serial-staggered coupling
 utils/     – I/O, visualization, helpers
 """
