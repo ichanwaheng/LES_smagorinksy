@@ -6,3 +6,4 @@ pyyaml>=6.0
 meshio>=5.3
 gmsh>=4.11
 tqdm>=4.65
+openpyxl>=3.1

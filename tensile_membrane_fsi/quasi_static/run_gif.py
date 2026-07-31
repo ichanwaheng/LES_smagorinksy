@@ -35,6 +35,7 @@ from src.utils.viz import (
 )
 
 from coupling import QuasiStaticFSI
+from excel_export import DeformationRecorder
 
 
 def parse_args():
@@ -84,6 +85,18 @@ def parse_args():
         type=float,
         default=None,
         help="Target visual peak |Δz| [m] for auto scaling (default: 0.4×span)",
+    )
+    p.add_argument(
+        "--excel",
+        type=str,
+        default=None,
+        help="Output Excel path for nodal x,y,z at each time step "
+        "(default: <output_dir>/membrane_deformations.xlsx)",
+    )
+    p.add_argument(
+        "--no-excel",
+        action="store_true",
+        help="Skip writing the deformations Excel workbook",
     )
     return p.parse_args()
 
@@ -164,6 +177,7 @@ def main():
     frames = []
     t0 = walltime.time()
     t_end = float(cfg["time"]["t_end"])
+    recorder = DeformationRecorder(reference_nodes=nodes_flat, fixed=sim.mesh.fixed)
 
     def on_frame(simulation, info, k):
         nonlocal disp_scale, disp_max, z_limits
@@ -185,6 +199,11 @@ def main():
         z_span_now = max(1.25 * disp_max, 0.35)
         z_limits = (z0 - z_span_now, z0 + z_span_now)
         title = f"Quasi-static UWM membrane  (×{disp_scale:.0f} Δz vs flat)"
+        recorder.record(
+            time=float(info["time"]),
+            nodes=simulation.nodes,
+            iteration=int(info["iteration"]),
+        )
         frames.append(
             render_flutter_frame(
                 nodes_vis,
@@ -297,6 +316,20 @@ def main():
         raise SystemExit("no frames recorded — check t_end / fluid_substeps")
     save_gif(frames, gif_path, fps=args.fps)
     print(f"[QS-GIF] {len(frames)} frames → {gif_path}")
+
+    if not args.no_excel:
+        excel_path = (
+            Path(args.excel)
+            if args.excel
+            else out / "membrane_deformations.xlsx"
+        )
+        # per-step sheets are handy for short runs; skip if many frames
+        per_step = len(recorder.times) <= 40
+        xlsx = recorder.write_xlsx(excel_path, per_step_sheets=per_step)
+        print(
+            f"[QS-GIF] deformations Excel ({len(recorder.times)} steps × "
+            f"{sim.mesh.n_nodes} nodes) → {xlsx}"
+        )
     return 0
 
 

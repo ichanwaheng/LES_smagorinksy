@@ -17,6 +17,7 @@ from src.utils.io import ensure_dir, load_config, save_snapshot, write_membrane_
 from src.utils.viz import plot_history, plot_membrane_3d, plot_membrane_and_slice
 
 from coupling import QuasiStaticFSI
+from excel_export import DeformationRecorder
 
 
 def parse_args():
@@ -34,6 +35,12 @@ def parse_args():
         "--quick",
         action="store_true",
         help="Coarse mesh / few iterations smoke run",
+    )
+    p.add_argument(
+        "--excel",
+        type=str,
+        default=None,
+        help="Output Excel path (default: <output_dir>/membrane_deformations.xlsx)",
     )
     return p.parse_args()
 
@@ -66,6 +73,10 @@ def main():
     )
 
     sim = QuasiStaticFSI(cfg)
+    z0 = float(cfg["fluid"]["membrane_z0"])
+    nodes_flat = sim.x_bc.copy()
+    nodes_flat[:, 2] = z0
+    recorder = DeformationRecorder(reference_nodes=nodes_flat, fixed=sim.mesh.fixed)
 
     def on_iter(simulation, info, k):
         print(
@@ -75,6 +86,11 @@ def main():
             f"uwm_res={info['uwm_residual']:.2e}  "
             f"|p|_max={info['pressure_max']:.2f} Pa  "
             f"CFL={info['cfl']:.3f}"
+        )
+        recorder.record(
+            time=float(info.get("time", info["iteration"])),
+            nodes=simulation.nodes,
+            iteration=int(info["iteration"]),
         )
         save_every = int(cfg["simulation"].get("save_interval", 1))
         if k % save_every == 0:
@@ -158,6 +174,11 @@ def main():
         )
 
     print(f"[QS-FSI] done — {len(hist.iteration)} outer iterations → {out}")
+    excel_path = Path(args.excel) if args.excel else out / "membrane_deformations.xlsx"
+    xlsx = recorder.write_xlsx(
+        excel_path, per_step_sheets=len(recorder.times) <= 40
+    )
+    print(f"[QS-FSI] deformations Excel → {xlsx}")
 
 
 if __name__ == "__main__":
