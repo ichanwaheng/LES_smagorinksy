@@ -35,20 +35,24 @@ python quasi_static/main.py --quick
 # full config
 python quasi_static/main.py -c quasi_static/config/quasi_static.yaml
 
-# animated GIF over a time interval (fluid time + UWM form updates)
+# animated GIFs over a time interval (fluid time + UWM form updates)
 python quasi_static/run_gif.py --quick
 python quasi_static/run_gif.py --t-end 1.0 --fps 8
 
-# exaggerate deflection in the GIF only (auto targets ~0.8 m peak |Δz|)
+# exaggerate deflection in the *amplified* GIF only (auto targets ~0.8 m peak |Δz|)
 python quasi_static/run_gif.py --quick
 python quasi_static/run_gif.py --quick --target-amp 1.0
 python quasi_static/run_gif.py --quick --disp-scale 400
 ```
 
 Outputs go to `quasi_static/output/` (NPZ, VTK, history CSV/PNG, slice plot,
-`membrane_quasi_static.gif` from `run_gif.py`, and
-`membrane_deformations.xlsx` with every node’s `x,y,z` / `ux,uy,uz` at each
-time step).
+**two GIFs**, and `membrane_deformations.xlsx`):
+
+| File | Content |
+|------|---------|
+| `membrane_quasi_static_original.gif` | Physical (unamplified) deflection |
+| `membrane_quasi_static_amplified.gif` | Visually scaled deflection (`disp_scale` / `target_amp`) |
+| `membrane_quasi_static.gif` | Legacy copy of the amplified GIF |
 
 Excel workbook sheets:
 - `summary` — peak displacement per time step
@@ -60,10 +64,10 @@ Each GIF frame corresponds to one outer iteration: the fluid advances by
 `fluid_substeps * dt`, then UWM updates the membrane form under the new load.
 Physical time on the frame is the accumulated fluid time.
 
-GIF deflection is amplified about the **flat mounting plane** (not the sagged
-seed) and auto-scaled so the peak visual `|Δz|` reaches `target_amp`. The 3D
-panel uses a corrected box aspect so Z is not squashed. Saved NPZ/VTK remain
-physical.
+The amplified GIF scales Δz about the **flat mounting plane** (not the sagged
+seed) and auto-scales so the peak visual `|Δz|` reaches `target_amp`. The 3D
+panel uses a corrected box aspect so Z is not squashed. Saved NPZ/VTK/Excel
+remain physical.
 
 ## Configure
 

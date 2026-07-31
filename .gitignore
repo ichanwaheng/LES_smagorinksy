@@ -11,3 +11,5 @@ fsi_result.npz
 fsi_membrane_wind.png
 *.html
 *.gif
+!tensile_membrane_fsi/media/**
+!tensile_membrane_fsi/quasi_static/media/**
