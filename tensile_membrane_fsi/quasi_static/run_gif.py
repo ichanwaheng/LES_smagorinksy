@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Quasi-static UWM + PISO/LES over a time interval → animated GIF.
+
+Advances the fluid in time; at each sample the membrane form is updated
+with the Updated Weight Method under the current pressure, then a frame
+is rendered (3D membrane + mid-plane |u| slice).
+
+    python quasi_static/run_gif.py --quick
+    python quasi_static/run_gif.py --t-end 1.0 --fps 8
+    python quasi_static/run_gif.py --out quasi_static/output/membrane_qs.gif
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+import time as walltime
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+QS = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(QS))
+
+from src.utils.io import ensure_dir, load_config, save_snapshot, write_membrane_vtk
+from src.utils.viz import (
+    plot_history,
+    plot_membrane_3d,
+    plot_membrane_and_slice,
+    render_flutter_frame,
+    save_gif,
+)
+
+from coupling import QuasiStaticFSI
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Quasi-static membrane FSI → animated GIF over a time interval"
+    )
+    p.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        default=str(QS / "config" / "quasi_static.yaml"),
+    )
+    p.add_argument(
+        "--t-end",
+        type=float,
+        default=None,
+        help="Physical end time [s] (default: from config time.t_end)",
+    )
+    p.add_argument("--fps", type=int, default=8, help="GIF frames per second")
+    p.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output GIF path (default: <output_dir>/membrane_quasi_static.gif)",
+    )
+    p.add_argument(
+        "--quick",
+        action="store_true",
+        help="Coarse mesh, short interval smoke GIF",
+    )
+    p.add_argument(
+        "--snapshot-every",
+        type=int,
+        default=5,
+        help="Frames between NPZ/VTK writes (0 disables)",
+    )
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    cfg = load_config(args.config)
+
+    if args.quick:
+        cfg["membrane"]["nx"] = 8
+        cfg["membrane"]["ny"] = 6
+        cfg["fluid"]["nx"] = 16
+        cfg["fluid"]["ny"] = 8
+        cfg["fluid"]["nz"] = 8
+        cfg["fluid"]["nu"] = 5.0e-3
+        cfg["time"]["dt"] = 0.01
+        cfg["time"]["t_end"] = 0.4
+        cfg["quasi_static"]["fluid_substeps"] = 4
+        cfg["quasi_static"]["max_iters"] = 40
+        cfg["quasi_static"]["load_scale"] = 0.35
+        cfg["quasi_static"]["shape_tol"] = 0.0  # do not early-stop on shape
+        cfg["les"]["enabled"] = True
+
+    if args.t_end is not None:
+        cfg["time"]["t_end"] = args.t_end
+
+    # keep iterating through the full interval (GIF needs every frame)
+    cfg["quasi_static"]["shape_tol"] = float(cfg["quasi_static"].get("shape_tol", 0.0))
+    if cfg["quasi_static"]["shape_tol"] > 0 and args.t_end is None and not args.quick:
+        # for timed GIF runs, disable early exit unless user set shape_tol=0
+        pass
+    cfg.setdefault("quasi_static", {})
+    # ensure we do not stop after first converged shape when making a movie
+    cfg["quasi_static"]["shape_tol"] = 0.0
+
+    out = ensure_dir(ROOT / cfg["simulation"].get("output_dir", "quasi_static/output"))
+    gif_path = Path(args.out) if args.out else out / "membrane_quasi_static.gif"
+
+    sim = QuasiStaticFSI(cfg)
+    nodes0 = sim.x_bc.copy()
+    mesh_nx, mesh_ny = sim.mesh.nx, sim.mesh.ny
+    j_slice = sim.grid.ny // 2
+
+    U = float(cfg["fluid"]["U_inlet"])
+    speed_max = 1.6 * U
+    z0 = float(cfg["fluid"]["membrane_z0"])
+    z_span = 0.20 * float(cfg["fluid"]["domain"]["H"])
+    z_limits = (z0 - z_span, z0 + z_span)
+    disp_max = max(0.08, 2.0 * float(cfg["quasi_static"].get("initial_sag", 0.03)))
+
+    frames = []
+    t0 = walltime.time()
+    t_end = float(cfg["time"]["t_end"])
+
+    def on_frame(simulation, info, k):
+        st = simulation.fluid.state
+        speed = np.sqrt(
+            st.u[:, j_slice, :] ** 2
+            + st.v[:, j_slice, :] ** 2
+            + st.w[:, j_slice, :] ** 2
+        )
+        frames.append(
+            render_flutter_frame(
+                simulation.nodes,
+                simulation.mesh.elements,
+                nodes0,
+                speed,
+                simulation.grid.x,
+                simulation.grid.z,
+                info["time"],
+                mesh_nx,
+                mesh_ny,
+                speed_max,
+                disp_max,
+                z_limits,
+                title="Quasi-static UWM membrane",
+            )
+        )
+        print(
+            f"  frame {len(frames):3d}  t={info['time']:6.3f}s  "
+            f"disp={info['max_disp']:.4e} m  "
+            f"|p|_max={info['pressure_max']:.2f} Pa  "
+            f"[{walltime.time() - t0:6.1f}s wall]"
+        )
+        if args.snapshot_every > 0 and (len(frames) - 1) % args.snapshot_every == 0:
+            save_snapshot(
+                out,
+                step=int(info["iteration"]),
+                time=float(info["time"]),
+                membrane_nodes=simulation.nodes,
+                membrane_elements=simulation.mesh.elements,
+                fluid_u=st.u,
+                fluid_v=st.v,
+                fluid_w=st.w,
+                fluid_p=st.p,
+                meta=info,
+            )
+            write_membrane_vtk(
+                out / f"membrane_{int(info['iteration']):06d}.vtk",
+                simulation.nodes,
+                simulation.mesh.elements,
+            )
+            plot_membrane_and_slice(
+                simulation.nodes,
+                simulation.mesh.elements,
+                st.u,
+                simulation.grid.x,
+                simulation.grid.z,
+                j_slice,
+                out / f"slice_{int(info['iteration']):06d}.png",
+                title=f"Quasi-static UWM  t={info['time']:.3f}s",
+            )
+
+    print(
+        f"[QS-GIF] fluid {sim.grid.nx}x{sim.grid.ny}x{sim.grid.nz}, "
+        f"membrane {mesh_nx}x{mesh_ny}, dt={sim.dt}, "
+        f"substeps={sim.fluid_substeps}, t_end={t_end}"
+    )
+    hist = sim.run_timed(t_end=t_end, callback=on_frame)
+
+    csv_path = out / "history.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(
+            [
+                "iteration",
+                "time",
+                "max_disp",
+                "shape_residual",
+                "uwm_residual",
+                "pressure_max",
+                "cfl",
+            ]
+        )
+        # rebuild time column from iteration index * dt_block
+        dt_block = sim.fluid_substeps * sim.dt
+        for i in range(len(hist.iteration)):
+            w.writerow(
+                [
+                    hist.iteration[i],
+                    hist.iteration[i] * dt_block,
+                    hist.max_disp[i],
+                    hist.shape_residual[i],
+                    hist.uwm_residual[i],
+                    hist.pressure_max[i],
+                    hist.cfl[i],
+                ]
+            )
+
+    class _H:
+        pass
+
+    h = _H()
+    h.time = [i * dt_block for i in hist.iteration]
+    h.max_disp = hist.max_disp
+    h.kinetic = hist.pressure_max
+    h.cfl = hist.cfl
+    h.residual = hist.shape_residual
+    plot_history(h, out / "history.png")
+    plot_membrane_3d(
+        sim.nodes,
+        sim.mesh.elements,
+        out / "membrane_final.png",
+        displacement=sim.nodes - nodes0,
+        title="Final quasi-static UWM form",
+    )
+
+    if not frames:
+        raise SystemExit("no frames recorded — check t_end / fluid_substeps")
+    save_gif(frames, gif_path, fps=args.fps)
+    print(f"[QS-GIF] {len(frames)} frames → {gif_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

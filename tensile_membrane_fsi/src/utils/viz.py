@@ -96,6 +96,7 @@ def render_flutter_frame(
     speed_max: float,
     disp_max: float,
     z_limits: tuple,
+    title: str | None = None,
 ):
     """Render one animation frame → RGB PIL image.
 
@@ -130,7 +131,8 @@ def render_flutter_frame(
     ax3d.set_ylabel("y [m]")
     ax3d.set_zlabel("z [m]")
     ax3d.view_init(elev=22, azim=-60)
-    ax3d.set_title(f"Tensile membrane flutter   t = {time:5.2f} s")
+    label = title or "Tensile membrane flutter"
+    ax3d.set_title(f"{label}   t = {time:5.2f} s")
     mappable = cm.ScalarMappable(norm=norm, cmap="coolwarm")
     fig.colorbar(mappable, ax=ax3d, shrink=0.55, pad=0.08, label="Δz [m]")
 

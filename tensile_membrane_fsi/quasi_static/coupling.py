@@ -146,6 +146,8 @@ class QuasiStaticFSI:
         self.history = QuasiStaticHistory()
         self._f_old: Optional[np.ndarray] = None
         self.iteration = 0
+        self.time = 0.0
+        self.t_end = float(tcfg.get("t_end", self.max_iters * self.fluid_substeps * self.dt))
 
     def _compute_loads(self):
         if self.load_mode == "interpolated_field":
@@ -213,9 +215,12 @@ class QuasiStaticFSI:
         self.nodes = x_new
         self.mesh.nodes = self.nodes.copy()
         self.iteration += 1
+        # physical time advanced by the fluid block in this outer iteration
+        self.time += self.fluid_substeps * self.dt
 
         info = {
             "iteration": float(self.iteration),
+            "time": float(self.time),
             "max_disp": float(
                 np.max(np.linalg.norm(self.nodes - self.x_bc, axis=1))
             ),
@@ -240,5 +245,24 @@ class QuasiStaticFSI:
             if callback is not None:
                 callback(self, info, k)
             if info["shape_residual"] < self.shape_tol:
+                break
+        return self.history
+
+    def run_timed(self, t_end: Optional[float] = None, callback=None) -> QuasiStaticHistory:
+        """Advance quasi-static FSI over a physical time interval.
+
+        Each outer iteration advances the PISO/LES fluid by
+        ``fluid_substeps * dt``, then updates the membrane form with UWM.
+        Frames / diagnostics see ``info['time']`` as the accumulated fluid time.
+        """
+        target = float(self.t_end if t_end is None else t_end)
+        k = 0
+        while self.time < target - 1e-15:
+            info = self.step()
+            if callback is not None:
+                callback(self, info, k)
+            k += 1
+            # hard cap so a tiny dt cannot run forever
+            if k >= max(self.max_iters, 1) * 50:
                 break
         return self.history
