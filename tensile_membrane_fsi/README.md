@@ -26,6 +26,12 @@ tensile_membrane_fsi/
 │   ├── fluid/                   # Cartesian NS + Smagorinsky LES + immersed membrane
 │   ├── fsi/                     # partitioned serial-staggered coupling
 │   └── utils/                   # YAML I/O, VTK/NPZ, plots, GIF animation
+├── quasi_static/                # quasi-static FSI: Updated Weight Method ↔ PISO/LES
+│   ├── uwm.py                   # UWM form-finding (prestress + fluid loads)
+│   ├── coupling.py              # outer iterative partitioned loop
+│   ├── main.py
+│   ├── config/quasi_static.yaml
+│   └── tests/
 ├── examples/
 │   ├── run_membrane_only.py     # structure-only gust response
 │   ├── run_fsi_demo.py          # coarse coupled demo
@@ -39,7 +45,8 @@ tensile_membrane_fsi/
 
 | Part | Model |
 |------|--------|
-| Membrane | Constant-strain triangles, isotropic prestress + plane-stress elasticity, explicit central-difference dynamics |
+| Membrane (transient) | Constant-strain triangles, isotropic prestress + plane-stress elasticity, explicit central-difference dynamics |
+| Membrane (quasi-static) | Updated Weight Method form updates under prestress + fluid nodal loads (no mass/damping) |
 | Fluid | 3D incompressible Navier–Stokes, fractional-step / PISO-like projection, optional Smagorinsky LES |
 | Coupling | Serial staggered: fluid → dynamic pressure loads → membrane → immersed-boundary update |
 | IB | Thin-band immersed membrane in the Cartesian fluid grid |
@@ -65,8 +72,12 @@ python examples/run_flutter_gif.py
 # full run from config
 python main.py -c config/default.yaml
 
+# quasi-static FSI: UWM form updates + PISO/LES fluid
+python quasi_static/main.py --quick
+python quasi_static/main.py -c quasi_static/config/quasi_static.yaml
+
 # tests
-python -m pytest tests/ -q
+python -m pytest tests/ quasi_static/tests -q
 ```
 
 ## Configure a case
