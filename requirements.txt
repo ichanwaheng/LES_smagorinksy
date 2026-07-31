@@ -1,0 +1,8 @@
+numpy
+scipy
+matplotlib
+meshio
+gmsh
+jupyter
+nbconvert
+ipykernel
