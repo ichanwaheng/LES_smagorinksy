@@ -76,6 +76,10 @@ python main.py -c config/default.yaml
 python quasi_static/main.py --quick
 python quasi_static/main.py -c quasi_static/config/quasi_static.yaml
 
+# quasi-static GIF over a time interval → quasi_static/output/membrane_quasi_static.gif
+python quasi_static/run_gif.py --quick
+python quasi_static/run_gif.py --t-end 1.0
+
 # tests
 python -m pytest tests/ quasi_static/tests -q
 ```

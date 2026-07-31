@@ -8,6 +8,7 @@ simulation:
 
 time:
   dt: 0.002              # fluid PISO time step inside each outer iteration
+  t_end: 1.0             # physical interval for timed/GIF runs [s]
 
 membrane:
   length: 2.0

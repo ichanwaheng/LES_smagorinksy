@@ -85,3 +85,56 @@ def test_quasi_static_smoke():
     assert np.isfinite(sim.nodes).all()
     assert np.isfinite(sim.fluid.state.u).all()
     assert hist.shape_residual[-1] >= 0.0
+
+
+def test_quasi_static_timed_gif_frame(tmp_path):
+    from src.utils.viz import render_flutter_frame, save_gif
+
+    cfg = load_config(QS / "config" / "quasi_static.yaml")
+    cfg["membrane"]["nx"] = 6
+    cfg["membrane"]["ny"] = 4
+    cfg["fluid"]["nx"] = 12
+    cfg["fluid"]["ny"] = 6
+    cfg["fluid"]["nz"] = 6
+    cfg["fluid"]["nu"] = 5.0e-3
+    cfg["time"]["dt"] = 0.01
+    cfg["time"]["t_end"] = 0.06
+    cfg["quasi_static"]["fluid_substeps"] = 2
+    cfg["quasi_static"]["max_iters"] = 20
+    cfg["quasi_static"]["shape_tol"] = 0.0
+    cfg["quasi_static"]["load_scale"] = 0.2
+    cfg["les"]["enabled"] = True
+    sim = QuasiStaticFSI(cfg)
+    nodes0 = sim.x_bc.copy()
+    frames = []
+    j = sim.grid.ny // 2
+
+    def on_frame(simulation, info, k):
+        st = simulation.fluid.state
+        speed = np.sqrt(
+            st.u[:, j, :] ** 2 + st.v[:, j, :] ** 2 + st.w[:, j, :] ** 2
+        )
+        frames.append(
+            render_flutter_frame(
+                simulation.nodes,
+                simulation.mesh.elements,
+                nodes0,
+                speed,
+                simulation.grid.x,
+                simulation.grid.z,
+                info["time"],
+                simulation.mesh.nx,
+                simulation.mesh.ny,
+                8.0,
+                0.1,
+                (0.7, 1.3),
+                title="Quasi-static UWM membrane",
+            )
+        )
+
+    sim.run_timed(t_end=0.06, callback=on_frame)
+    assert len(frames) >= 2
+    assert frames[-1] is not None
+    gif = save_gif(frames, tmp_path / "qs.gif", fps=5)
+    assert gif.exists() and gif.stat().st_size > 0
+    assert sim.time >= 0.06 - 1e-12

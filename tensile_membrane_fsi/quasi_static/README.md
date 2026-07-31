@@ -34,9 +34,18 @@ python quasi_static/main.py --quick
 
 # full config
 python quasi_static/main.py -c quasi_static/config/quasi_static.yaml
+
+# animated GIF over a time interval (fluid time + UWM form updates)
+python quasi_static/run_gif.py --quick
+python quasi_static/run_gif.py --t-end 1.0 --fps 8
 ```
 
-Outputs go to `quasi_static/output/` (NPZ, VTK, history CSV/PNG, slice plot).
+Outputs go to `quasi_static/output/` (NPZ, VTK, history CSV/PNG, slice plot,
+and `membrane_quasi_static.gif` from `run_gif.py`).
+
+Each GIF frame corresponds to one outer iteration: the fluid advances by
+`fluid_substeps * dt`, then UWM updates the membrane form under the new load.
+Physical time on the frame is the accumulated fluid time.
 
 ## Configure
 
