@@ -2,8 +2,8 @@
 
 Partitioned **quasi-static** fluid–structure interaction for prestressed tensile
 membranes. The membrane form is updated with the **Updated Weight Method (UWM)**
-(Marbaniang, Dutta & Ghosh, 2022); the fluid is advanced with the existing
-**PISO-like** incompressible solver and optional **Smagorinsky LES**.
+(Marbaniang, Dutta & Ghosh, 2022); the fluid is advanced with **Smagorinsky LES**
+discretisation followed by the **PISO** algorithm (Issa, 1986).
 
 This is separate from the transient explicit-dynamics path in `../src/fsi`.
 

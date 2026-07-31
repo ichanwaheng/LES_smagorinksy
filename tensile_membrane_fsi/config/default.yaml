@@ -54,7 +54,8 @@ fsi:
   # Pressure coefficient mapping onto membrane faces
   load_mode: "dynamic_pressure"  # dynamic_pressure | interpolated_field
 
-# LES Smagorinsky (optional SGS for fluid)
+# LES Smagorinsky + PISO
 les:
   enabled: true
   Cs: 0.17
+  piso_correctors: 2       # Issa PISO pressure–velocity correctors (≥1)

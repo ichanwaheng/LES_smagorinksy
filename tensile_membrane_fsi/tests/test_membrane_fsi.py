@@ -45,13 +45,29 @@ def test_membrane_step_stable():
 
 def test_fluid_step():
     grid = FluidGrid(L=4, W=2, H=2, nx=8, ny=4, nz=4)
-    fluid = FluidSolver(grid, U_inlet=5.0, use_les=False)
+    fluid = FluidSolver(grid, U_inlet=5.0, use_les=False, n_correctors=2)
     fluid.step(0.01)
     assert np.isfinite(fluid.state.u).all()
+    assert np.isfinite(fluid.state.p).all()
     # inlet profile tapers to zero at walls; peak equals U_inlet
     assert fluid.state.u[0].max() == pytest.approx(5.0, rel=0.05)
     assert fluid.state.u[0].mean() > 0.5 * 5.0
 
+
+def test_piso_les_correctors_reduce_divergence():
+    """PISO with LES: more correctors should not blow up; fields stay finite."""
+    grid = FluidGrid(L=4, W=2, H=2, nx=8, ny=4, nz=4)
+    fluid = FluidSolver(
+        grid, U_inlet=5.0, use_les=True, Cs=0.17, nu=1e-3, n_correctors=2
+    )
+    for _ in range(5):
+        fluid.step(0.005)
+    assert np.isfinite(fluid.state.u).all()
+    assert np.isfinite(fluid.state.v).all()
+    assert np.isfinite(fluid.state.w).all()
+    assert np.isfinite(fluid.state.p).all()
+    assert fluid.n_correctors == 2
+    assert np.all(fluid.state.nu_eff >= fluid.nu)
 
 def test_gusty_inlet():
     grid = FluidGrid(L=4, W=2, H=2, nx=8, ny=4, nz=4)

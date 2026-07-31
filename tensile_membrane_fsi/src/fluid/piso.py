@@ -1,4 +1,18 @@
-"""Incompressible Navier–Stokes on collocated Cartesian grid (PISO-like)."""
+"""Incompressible Navier–Stokes on a collocated Cartesian grid — PISO + LES.
+
+Discretisation
+--------------
+1. **LES (Smagorinsky)** — evaluate subgrid eddy viscosity ν_t from the
+   resolved strain-rate tensor and form ν_eff = ν + ν_t.
+2. **Momentum** — first-order upwind convection + 7-point viscous Laplacian
+   with ν_eff (explicit neighbour fluxes H(u)).
+3. **PISO** (Issa, 1986) — momentum predictor with the old pressure gradient,
+   then ``n_correctors`` pressure–velocity correctors. Correctors after the
+   first rebuild H(u) from the latest velocity (the PISO neighbour update),
+   then re-correct pressure.
+
+This replaces the earlier single-projection “PISO-like” fractional step.
+"""
 
 from __future__ import annotations
 
@@ -48,17 +62,14 @@ def _diff_central(phi: np.ndarray, dx: float, axis: int) -> np.ndarray:
 
 
 def _laplacian(phi: np.ndarray, dx: float, dy: float, dz: float) -> np.ndarray:
-    """5/7-point Laplacian with Neumann (copy) boundaries — no wrap."""
+    """7-point Laplacian with Neumann (copy) boundaries — no wrap."""
     lap = np.zeros_like(phi)
-    # x
     lap[1:-1] += (phi[2:] - 2 * phi[1:-1] + phi[0:-2]) / dx**2
     lap[0] += (phi[1] - phi[0]) / dx**2
     lap[-1] += (phi[-2] - phi[-1]) / dx**2
-    # y
     lap[:, 1:-1] += (phi[:, 2:] - 2 * phi[:, 1:-1] + phi[:, 0:-2]) / dy**2
     lap[:, 0] += (phi[:, 1] - phi[:, 0]) / dy**2
     lap[:, -1] += (phi[:, -2] - phi[:, -1]) / dy**2
-    # z
     lap[:, :, 1:-1] += (phi[:, :, 2:] - 2 * phi[:, :, 1:-1] + phi[:, :, 0:-2]) / dz**2
     lap[:, :, 0] += (phi[:, :, 1] - phi[:, :, 0]) / dz**2
     lap[:, :, -1] += (phi[:, :, -2] - phi[:, :, -1]) / dz**2
@@ -66,12 +77,15 @@ def _laplacian(phi: np.ndarray, dx: float, dy: float, dz: float) -> np.ndarray:
 
 
 class FluidSolver:
-    """Simplified 3D incompressible solver with fractional-step / PISO flavour.
+    """Collocated incompressible NS with Smagorinsky LES + PISO.
 
-    - Convective terms: first-order upwind
-    - Viscous terms: Laplacian with ν_eff (molecular + optional Smagorinsky)
-    - Pressure: Poisson with Neumann walls (pinned cell)
-    - Immersed membrane: velocity forced in masked cells
+    Parameters
+    ----------
+    n_correctors :
+        Number of PISO pressure–velocity correctors (Issa: typically 2).
+        The first corrector uses the momentum predictor; later correctors
+        rebuild the explicit momentum residual H(u) from the latest velocity
+        before solving the pressure equation again.
     """
 
     def __init__(
@@ -85,6 +99,7 @@ class FluidSolver:
         u_clip: Optional[float] = None,
         gust_amp: float = 0.0,
         gust_freq: float = 1.0,
+        n_correctors: int = 2,
     ) -> None:
         self.grid = grid
         self.rho = float(rho)
@@ -93,13 +108,10 @@ class FluidSolver:
         self.use_les = bool(use_les)
         self.Cs = float(Cs)
         self.u_clip = float(u_clip) if u_clip is not None else 5.0 * abs(self.U_inlet)
-        # Unsteady gusty inflow: sinusoidal streamwise + vertical velocity
-        # fluctuations (fraction of U_inlet). Drives membrane flutter.
         self.gust_amp = float(gust_amp)
         self.gust_freq = float(gust_freq)
+        self.n_correctors = max(int(n_correctors), 1)
         self.t = 0.0
-        # inlet profile tapering to zero at the no-slip walls; avoids the
-        # incompatible inlet/wall corner that seeds velocity spikes
         py = np.sin(np.pi * (np.arange(grid.ny) + 0.5) / grid.ny)
         pz = np.sin(np.pi * (np.arange(grid.nz) + 0.5) / grid.nz)
         self._inlet_profile = (py[:, None] * pz[None, :]) ** 0.25
@@ -133,19 +145,14 @@ class FluidSolver:
         self._w_solid = z if w_s is None else np.asarray(w_s, dtype=float)
 
     def _apply_bc(self, u, v, w) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # side walls (no-slip)
         for arr in (u, v, w):
             arr[:, 0, :] = 0.0
             arr[:, -1, :] = 0.0
             arr[:, :, 0] = 0.0
             arr[:, :, -1] = 0.0
-        # outlet (zero gradient)
         u[-1, :, :] = u[-2, :, :]
         v[-1, :, :] = v[-2, :, :]
         w[-1, :, :] = w[-2, :, :]
-        # inlet last (optionally gusty: sinusoidal streamwise + vertical
-        # fluctuation with a slower phase-shifted harmonic so the forcing
-        # is not perfectly periodic)
         if self.gust_amp > 0.0:
             om = 2.0 * np.pi * self.gust_freq
             u_in = self.U_inlet * (1.0 + 0.5 * self.gust_amp * np.sin(om * self.t))
@@ -159,7 +166,6 @@ class FluidSolver:
         u[0, :, :] = u_in * self._inlet_profile
         v[0, :, :] = 0.0
         w[0, :, :] = w_in * self._inlet_profile
-        # immersed membrane (soft: only force if mask)
         m = self._obstacle
         if np.any(m):
             u[m] = self._u_solid[m]
@@ -174,21 +180,19 @@ class FluidSolver:
             out.append(np.clip(g, -self.u_clip, self.u_clip))
         return tuple(out)
 
-    def _advect_diffuse(
+    def _convective(
         self,
         phi: np.ndarray,
         u: np.ndarray,
         v: np.ndarray,
         w: np.ndarray,
-        nu_eff: np.ndarray,
-        dt: float,
     ) -> np.ndarray:
+        """First-order upwind convective derivative u·∇φ."""
         g = self.grid
         dx, dy, dz = g.dx, g.dy, g.dz
         dudx = np.zeros_like(phi)
         dudy = np.zeros_like(phi)
         dudz = np.zeros_like(phi)
-
         dudx[1:-1] = np.where(
             u[1:-1] >= 0,
             (phi[1:-1] - phi[:-2]) / dx,
@@ -204,11 +208,43 @@ class FluidSolver:
             (phi[:, :, 1:-1] - phi[:, :, :-2]) / dz,
             (phi[:, :, 2:] - phi[:, :, 1:-1]) / dz,
         )
-        conv = u * dudx + v * dudy + w * dudz
-        lap = _laplacian(phi, dx, dy, dz)
-        # CFL-friendly explicit update
-        phi_new = phi + dt * (-conv + nu_eff * lap)
-        return phi_new
+        return u * dudx + v * dudy + w * dudz
+
+    def _momentum_H(
+        self,
+        phi: np.ndarray,
+        u: np.ndarray,
+        v: np.ndarray,
+        w: np.ndarray,
+        nu_eff: np.ndarray,
+    ) -> np.ndarray:
+        """Explicit momentum residual without pressure: H = -conv + ν_eff ∇²φ."""
+        g = self.grid
+        conv = self._convective(phi, u, v, w)
+        lap = _laplacian(phi, g.dx, g.dy, g.dz)
+        return -conv + nu_eff * lap
+
+    def _pressure_gradient(
+        self, p: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        g = self.grid
+        return (
+            _diff_central(p, g.dx, 0),
+            _diff_central(p, g.dy, 1),
+            _diff_central(p, g.dz, 2),
+        )
+
+    def _divergence(
+        self, u: np.ndarray, v: np.ndarray, w: np.ndarray
+    ) -> np.ndarray:
+        g = self.grid
+        div = (
+            _diff_central(u, g.dx, 0)
+            + _diff_central(v, g.dy, 1)
+            + _diff_central(w, g.dz, 2)
+        )
+        div[self._obstacle] = 0.0
+        return div
 
     def _build_laplacian(self) -> sparse.csr_matrix:
         g = self.grid
@@ -230,9 +266,6 @@ class FluidSolver:
                     if i > 0:
                         add(idx, idx - ny * nz, 1.0 / dx2)
                         diag -= 1.0 / dx2
-                    else:
-                        # Neumann → ghost = boundary ⇒ no neighbour contrib
-                        pass
                     if i < nx - 1:
                         add(idx, idx + ny * nz, 1.0 / dx2)
                         diag -= 1.0 / dx2
@@ -255,66 +288,93 @@ class FluidSolver:
         A[0, 0] = 1.0
         return A.tocsr()
 
-    def _pressure_poisson(self, div: np.ndarray, dt: float) -> np.ndarray:
+    def _solve_pressure_correction(self, div: np.ndarray, dt: float) -> np.ndarray:
+        """Solve ∇² p' = (ρ / Δt) ∇·u*  (Neumann, pinned cell)."""
         if self._lap_cache is None:
             self._lap_cache = self._build_laplacian()
         rhs = (self.rho / max(dt, 1e-12)) * div.ravel(order="C")
         rhs = np.nan_to_num(rhs, nan=0.0, posinf=0.0, neginf=0.0)
-        # enforce compatibility of the Neumann problem (zero-mean RHS) so the
-        # global mass imbalance is not dumped at the pinned cell
         rhs -= rhs.mean()
         rhs[0] = 0.0
-        p_flat, info = cg(self._lap_cache, rhs, rtol=1e-5, maxiter=300)
+        p_flat, info = cg(self._lap_cache, rhs, rtol=1e-6, maxiter=400)
         if info != 0 or not np.all(np.isfinite(p_flat)):
             p_flat = spsolve(self._lap_cache, rhs)
-        p = np.asarray(p_flat, dtype=float).reshape(self.grid.shape, order="C")
-        p = np.nan_to_num(p, nan=0.0, posinf=0.0, neginf=0.0)
-        # remove mean for Neumann system
-        p -= p.mean()
-        return p
+        p_corr = np.asarray(p_flat, dtype=float).reshape(self.grid.shape, order="C")
+        p_corr = np.nan_to_num(p_corr, nan=0.0, posinf=0.0, neginf=0.0)
+        p_corr -= p_corr.mean()
+        return p_corr
 
-    def step(self, dt: float) -> FluidState:
-        self.t += dt
+    def _les_nu_eff(
+        self, u: np.ndarray, v: np.ndarray, w: np.ndarray, dt: float
+    ) -> np.ndarray:
+        """Smagorinsky LES discretisation → ν_eff, capped for explicit stability."""
         g = self.grid
-        u, v, w = self.state.u, self.state.v, self.state.w
-        u, v, w = self._sanitize(u, v, w)
-
         if self.use_les:
             nu_eff = smagorinsky_viscosity(u, v, w, g, self.Cs, self.nu)
             nu_eff = np.clip(nu_eff, self.nu, 50.0 * self.nu + 1.0)
         else:
             nu_eff = np.full(g.shape, self.nu)
-        # floor viscosity for stability on coarse grids
         nu_eff = np.maximum(nu_eff, self.nu)
-        # cap by the explicit-diffusion stability limit so a large SGS
-        # viscosity cannot blow up the forward-Euler viscous update
-        nu_stab = 0.2 / (dt * (1.0 / g.dx**2 + 1.0 / g.dy**2 + 1.0 / g.dz**2))
-        nu_eff = np.minimum(nu_eff, max(nu_stab, self.nu))
+        nu_stab = 0.2 / (
+            dt * (1.0 / g.dx**2 + 1.0 / g.dy**2 + 1.0 / g.dz**2)
+        )
+        return np.minimum(nu_eff, max(nu_stab, self.nu))
 
-        u_s = self._advect_diffuse(u, u, v, w, nu_eff, dt)
-        v_s = self._advect_diffuse(v, u, v, w, nu_eff, dt)
-        w_s = self._advect_diffuse(w, u, v, w, nu_eff, dt)
+    def step(self, dt: float) -> FluidState:
+        """One PISO time step after Smagorinsky LES discretisation."""
+        self.t += dt
+        g = self.grid
+        u, v, w = self._sanitize(self.state.u, self.state.v, self.state.w)
+        p = np.nan_to_num(self.state.p, nan=0.0)
+
+        # ------------------------------------------------------------------
+        # 1) LES Smagorinsky — discretise subgrid viscosity from strain rate
+        # ------------------------------------------------------------------
+        nu_eff = self._les_nu_eff(u, v, w, dt)
+
+        # ------------------------------------------------------------------
+        # 2) Momentum predictor (Issa): H(u^n) − ∇p^n / ρ
+        # ------------------------------------------------------------------
+        Hu = self._momentum_H(u, u, v, w, nu_eff)
+        Hv = self._momentum_H(v, u, v, w, nu_eff)
+        Hw = self._momentum_H(w, u, v, w, nu_eff)
+        dpdx, dpdy, dpdz = self._pressure_gradient(p)
+        u_s = u + dt * (Hu - dpdx / self.rho)
+        v_s = v + dt * (Hv - dpdy / self.rho)
+        w_s = w + dt * (Hw - dpdz / self.rho)
         u_s, v_s, w_s = self._sanitize(u_s, v_s, w_s)
         u_s, v_s, w_s = self._apply_bc(u_s, v_s, w_s)
 
-        dudx = _diff_central(u_s, g.dx, 0)
-        dvdy = _diff_central(v_s, g.dy, 1)
-        dwdz = _diff_central(w_s, g.dz, 2)
-        div = dudx + dvdy + dwdz
-        div[self._obstacle] = 0.0
+        # ------------------------------------------------------------------
+        # 3) PISO pressure–velocity correctors
+        # ------------------------------------------------------------------
+        for corr in range(self.n_correctors):
+            if corr > 0:
+                # Neighbour / flux update with latest corrected velocity
+                # (distinguishes PISO from a single fractional-step projection).
+                Hu = self._momentum_H(u_s, u_s, v_s, w_s, nu_eff)
+                Hv = self._momentum_H(v_s, u_s, v_s, w_s, nu_eff)
+                Hw = self._momentum_H(w_s, u_s, v_s, w_s, nu_eff)
+                dpdx, dpdy, dpdz = self._pressure_gradient(p)
+                u_s = u + dt * (Hu - dpdx / self.rho)
+                v_s = v + dt * (Hv - dpdy / self.rho)
+                w_s = w + dt * (Hw - dpdz / self.rho)
+                u_s, v_s, w_s = self._sanitize(u_s, v_s, w_s)
+                u_s, v_s, w_s = self._apply_bc(u_s, v_s, w_s)
 
-        p_new = self._pressure_poisson(div, dt)
+            div = self._divergence(u_s, v_s, w_s)
+            p_corr = self._solve_pressure_correction(div, dt)
+            cdx, cdy, cdz = self._pressure_gradient(p_corr)
+            u_s = u_s - (dt / self.rho) * cdx
+            v_s = v_s - (dt / self.rho) * cdy
+            w_s = w_s - (dt / self.rho) * cdz
+            p = p + p_corr
+            u_s, v_s, w_s = self._sanitize(u_s, v_s, w_s)
+            u_s, v_s, w_s = self._apply_bc(u_s, v_s, w_s)
 
-        dpdx = _diff_central(p_new, g.dx, 0)
-        dpdy = _diff_central(p_new, g.dy, 1)
-        dpdz = _diff_central(p_new, g.dz, 2)
-        u_n = u_s - (dt / self.rho) * dpdx
-        v_n = v_s - (dt / self.rho) * dpdy
-        w_n = w_s - (dt / self.rho) * dpdz
-        u_n, v_n, w_n = self._sanitize(u_n, v_n, w_n)
-        u_n, v_n, w_n = self._apply_bc(u_n, v_n, w_n)
-
-        self.state = FluidState(u=u_n, v=v_n, w=w_n, p=p_new, nu_eff=nu_eff)
+        p = np.nan_to_num(p, nan=0.0)
+        p -= p.mean()
+        self.state = FluidState(u=u_s, v=v_s, w=w_s, p=p, nu_eff=nu_eff)
         return self.state
 
     def sample_at(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

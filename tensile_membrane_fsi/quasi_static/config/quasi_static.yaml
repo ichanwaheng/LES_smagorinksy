@@ -40,6 +40,7 @@ fluid:
 les:
   enabled: true
   Cs: 0.17
+  piso_correctors: 2       # Issa PISO correctors after Smagorinsky discretisation
 
 # Outer quasi-static coupling (partitioned, no structural mass/damping)
 quasi_static:
