@@ -1,0 +1,55 @@
+# Quasi-static FSI: PISO + Smagorinsky LES fluid ↔ Updated Weight Method membrane
+
+simulation:
+  name: "membrane_quasi_static_uwm"
+  output_dir: "quasi_static/output"
+  save_interval: 1
+  plot: true
+
+time:
+  dt: 0.002              # fluid PISO time step inside each outer iteration
+
+membrane:
+  length: 2.0
+  width: 1.5
+  nx: 16
+  ny: 12
+  thickness: 0.001
+  density: 1200.0
+  youngs_modulus: 5.0e+8
+  poisson: 0.3
+  prestress: 5.0e+4      # [Pa] → N_pre = prestress * thickness
+  fixed_edges: ["left", "right", "bottom", "top"]
+
+fluid:
+  domain:
+    L: 8.0
+    W: 3.0
+    H: 2.5
+  nx: 32
+  ny: 16
+  nz: 14
+  rho: 1.225
+  nu: 1.0e-3
+  U_inlet: 5.0
+  membrane_x0: 2.0
+  membrane_y0: 0.75
+  membrane_z0: 1.0
+
+les:
+  enabled: true
+  Cs: 0.17
+
+# Outer quasi-static coupling (partitioned, no structural mass/damping)
+quasi_static:
+  max_iters: 12
+  shape_tol: 1.0e-3
+  under_relaxation: 0.5      # shape under-relaxation
+  load_relaxation: 0.5       # force under-relaxation
+  load_scale: 0.25
+  load_mode: "dynamic_pressure"   # dynamic_pressure | pressure_jump | interpolated_field
+  fluid_substeps: 40         # PISO+LES steps per outer iteration
+  initial_sag: 0.03
+  uwm_weight_updates: 20
+  uwm_tol: 1.0e-7
+  uwm_relaxation: 1.0
