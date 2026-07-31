@@ -71,7 +71,19 @@ def parse_args():
         default=5,
         help="Frames between NPZ/VTK writes (0 disables)",
     )
+    p.add_argument(
+        "--disp-scale",
+        type=float,
+        default=None,
+        help="Visual amplification of membrane deflection in the GIF "
+        "(physics unchanged). Default: config quasi_static.disp_scale or 20",
+    )
     return p.parse_args()
+
+
+def _amplify_nodes(nodes: np.ndarray, nodes0: np.ndarray, scale: float) -> np.ndarray:
+    """Return nodes0 + scale * (nodes - nodes0) for display only."""
+    return nodes0 + float(scale) * (nodes - nodes0)
 
 
 def main():
@@ -108,6 +120,14 @@ def main():
     out = ensure_dir(ROOT / cfg["simulation"].get("output_dir", "quasi_static/output"))
     gif_path = Path(args.out) if args.out else out / "membrane_quasi_static.gif"
 
+    disp_scale = float(
+        args.disp_scale
+        if args.disp_scale is not None
+        else cfg.get("quasi_static", {}).get("disp_scale", 20.0)
+    )
+    if args.quick and args.disp_scale is None:
+        disp_scale = float(cfg.get("quasi_static", {}).get("disp_scale", 25.0))
+
     sim = QuasiStaticFSI(cfg)
     nodes0 = sim.x_bc.copy()
     mesh_nx, mesh_ny = sim.mesh.nx, sim.mesh.ny
@@ -116,24 +136,35 @@ def main():
     U = float(cfg["fluid"]["U_inlet"])
     speed_max = 1.6 * U
     z0 = float(cfg["fluid"]["membrane_z0"])
-    z_span = 0.20 * float(cfg["fluid"]["domain"]["H"])
+    # colour / axis scales use amplified deflection so motion is obvious
+    sag0 = float(cfg["quasi_static"].get("initial_sag", 0.03))
+    disp_max = max(0.12, disp_scale * 1.5 * sag0)
+    z_span = max(0.25 * float(cfg["fluid"]["domain"]["H"]), 1.2 * disp_max)
     z_limits = (z0 - z_span, z0 + z_span)
-    disp_max = max(0.08, 2.0 * float(cfg["quasi_static"].get("initial_sag", 0.03)))
+    title = f"Quasi-static UWM membrane  (×{disp_scale:g} disp.)"
 
     frames = []
     t0 = walltime.time()
     t_end = float(cfg["time"]["t_end"])
+    peak_disp = sag0
 
     def on_frame(simulation, info, k):
+        nonlocal peak_disp, disp_max, z_limits
         st = simulation.fluid.state
         speed = np.sqrt(
             st.u[:, j_slice, :] ** 2
             + st.v[:, j_slice, :] ** 2
             + st.w[:, j_slice, :] ** 2
         )
+        # amplify deflection for the GIF only (NPZ/VTK stay physical)
+        nodes_vis = _amplify_nodes(simulation.nodes, nodes0, disp_scale)
+        peak_disp = max(peak_disp, float(info["max_disp"]))
+        disp_max = max(disp_max, disp_scale * 1.25 * peak_disp + 1e-6)
+        z_span_now = max(0.25 * float(cfg["fluid"]["domain"]["H"]), 1.2 * disp_max)
+        z_limits = (z0 - z_span_now, z0 + z_span_now)
         frames.append(
             render_flutter_frame(
-                simulation.nodes,
+                nodes_vis,
                 simulation.mesh.elements,
                 nodes0,
                 speed,
@@ -145,12 +176,13 @@ def main():
                 speed_max,
                 disp_max,
                 z_limits,
-                title="Quasi-static UWM membrane",
+                title=title,
             )
         )
         print(
             f"  frame {len(frames):3d}  t={info['time']:6.3f}s  "
             f"disp={info['max_disp']:.4e} m  "
+            f"disp×{disp_scale:g}={disp_scale * info['max_disp']:.3f} m  "
             f"|p|_max={info['pressure_max']:.2f} Pa  "
             f"[{walltime.time() - t0:6.1f}s wall]"
         )

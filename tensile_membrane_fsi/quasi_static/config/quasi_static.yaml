@@ -54,3 +54,4 @@ quasi_static:
   uwm_weight_updates: 20
   uwm_tol: 1.0e-7
   uwm_relaxation: 1.0
+  disp_scale: 20.0           # GIF-only visual amplification of deflection
