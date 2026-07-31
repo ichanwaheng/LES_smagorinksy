@@ -1,6 +1,7 @@
 # runtime outputs are ignored, except the committed flutter results
 output/*
 !output/flutter/
+quasi_static/output/
 __pycache__/
 *.pyc
 .pytest_cache/
