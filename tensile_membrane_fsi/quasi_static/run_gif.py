@@ -58,6 +58,13 @@ def parse_args():
         default=None,
         help="Physical end time [s] (default: from config time.t_end)",
     )
+    p.add_argument(
+        "--fluid-substeps",
+        type=int,
+        default=None,
+        help="PISO steps per outer/GIF frame (smaller → more time steps). "
+        "Default: config quasi_static.fluid_substeps",
+    )
     p.add_argument("--fps", type=int, default=8, help="GIF frames per second")
     p.add_argument(
         "--out-dir",
@@ -172,15 +179,17 @@ def main():
         cfg["fluid"]["nz"] = 8
         cfg["fluid"]["nu"] = 5.0e-3
         cfg["time"]["dt"] = 0.01
-        cfg["time"]["t_end"] = 0.4
-        cfg["quasi_static"]["fluid_substeps"] = 4
-        cfg["quasi_static"]["max_iters"] = 40
+        cfg["time"]["t_end"] = 1.0
+        cfg["quasi_static"]["fluid_substeps"] = 2
+        cfg["quasi_static"]["max_iters"] = 200
         cfg["quasi_static"]["load_scale"] = 1.5
         cfg["quasi_static"]["shape_tol"] = 0.0
         cfg["les"]["enabled"] = True
 
     if args.t_end is not None:
         cfg["time"]["t_end"] = args.t_end
+    if args.fluid_substeps is not None:
+        cfg["quasi_static"]["fluid_substeps"] = int(args.fluid_substeps)
 
     cfg.setdefault("quasi_static", {})
     cfg["quasi_static"]["shape_tol"] = 0.0

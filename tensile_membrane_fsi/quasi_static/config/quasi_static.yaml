@@ -8,7 +8,8 @@ simulation:
 
 time:
   dt: 0.002              # fluid PISO time step inside each outer iteration
-  t_end: 1.0             # physical interval for timed/GIF runs [s]
+  t_end: 2.0             # physical interval for timed/GIF runs [s]
+                         # outer steps ≈ t_end / (fluid_substeps * dt)
 
 membrane:
   length: 2.0
@@ -44,13 +45,13 @@ les:
 
 # Outer quasi-static coupling (partitioned, no structural mass/damping)
 quasi_static:
-  max_iters: 12
+  max_iters: 200             # safety cap for timed/GIF runs (outer form updates)
   shape_tol: 1.0e-3
   under_relaxation: 0.5      # shape under-relaxation
   load_relaxation: 0.5       # force under-relaxation
   load_scale: 0.25
   load_mode: "dynamic_pressure"   # dynamic_pressure | pressure_jump | interpolated_field
-  fluid_substeps: 40         # PISO+LES steps per outer iteration
+  fluid_substeps: 10         # PISO steps per outer iteration (↓ → more GIF frames)
   initial_sag: 0.03
   uwm_weight_updates: 20
   uwm_tol: 1.0e-7
