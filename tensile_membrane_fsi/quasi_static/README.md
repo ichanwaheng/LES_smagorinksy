@@ -36,15 +36,18 @@ python quasi_static/main.py --quick
 python quasi_static/main.py -c quasi_static/config/quasi_static.yaml
 
 # animated GIFs over a time interval (fluid time + UWM form updates)
+# more frames: raise t_end and/or lower --fluid-substeps
 python quasi_static/run_gif.py --quick
-python quasi_static/run_gif.py --t-end 1.0 --fps 8
+python quasi_static/run_gif.py --t-end 2.0 --fluid-substeps 5 --fps 10
 
 # exaggerate deflection in the *amplified* GIF only (auto targets ~0.8 m peak |Δz|)
-python quasi_static/run_gif.py --quick
 python quasi_static/run_gif.py --quick --target-amp 1.0
 python quasi_static/run_gif.py --quick --disp-scale 400
 ```
 
+Outer GIF/time steps ≈ `t_end / (fluid_substeps * dt)`.
+Defaults: `t_end=2.0`, `dt=0.002`, `fluid_substeps=10` → **100** outer steps.
+`--quick` uses `t_end=1.0`, `dt=0.01`, `fluid_substeps=2` → **50** frames.
 Outputs go to `quasi_static/output/` (NPZ, VTK, history CSV/PNG, slice plot,
 **two GIFs**, and `membrane_deformations.xlsx`):
 
