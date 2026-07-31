@@ -81,7 +81,7 @@ See `config/quasi_static.yaml`:
 | `membrane.*` | Patch size, mesh, prestress, supports |
 | `fluid.*` / `les.*` | Channel, PISO grid, Smagorinsky |
 | `time.dt` | Fluid Δt inside each outer iteration |
-| `quasi_static.*` | Outer iters, UWM updates, load mode, relaxation |
+| `quasi_static.load_mode` | **`pressure_jump`** (default): continuous two-sided Δp so loads can reverse after the membrane sags; `dynamic_pressure` is incidence-based and often stays one-sided |
 
 ## Tests
 
