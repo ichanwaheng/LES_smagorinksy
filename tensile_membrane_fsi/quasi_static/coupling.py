@@ -138,8 +138,8 @@ class QuasiStaticFSI:
         self.shape_tol = float(qcfg.get("shape_tol", 1e-3))
         self.alpha_shape = float(qcfg.get("under_relaxation", 0.5))
         self.alpha_load = float(qcfg.get("load_relaxation", 0.5))
-        self.load_scale = float(qcfg.get("load_scale", 0.25))
-        self.load_mode = qcfg.get("load_mode", "dynamic_pressure")
+        self.load_scale = float(qcfg.get("load_scale", 0.5))
+        self.load_mode = qcfg.get("load_mode", "pressure_jump")
         self.uwm_weight_updates = int(qcfg.get("uwm_weight_updates", 20))
         self.uwm_tol = float(qcfg.get("uwm_tol", 1e-7))
         self.uwm_relax = float(qcfg.get("uwm_relaxation", 1.0))
@@ -172,6 +172,7 @@ class QuasiStaticFSI:
                 self.nodes,
                 rho=float(self.cfg["fluid"]["rho"]),
                 U_ref=float(self.cfg["fluid"]["U_inlet"]),
+                offset=3.0 * self.grid.dz,
             )
         return pressure, f_nodal * self.load_scale
 
@@ -190,12 +191,19 @@ class QuasiStaticFSI:
             self.fluid.step(self.dt)
 
         pressure, f_nodal = self._compute_loads()
+        # Do not freeze the load sign: blend only magnitude history lightly so
+        # continuous fluid pressure can reverse when the deformed shape / wake
+        # changes (needed for downward then upward response).
         if self._f_old is None:
             f_use = f_nodal
         else:
-            f_use = under_relax(f_nodal, self._f_old, self.alpha_load)
+            # higher α → trust the new continuous fluid load more
+            alpha = max(self.alpha_load, 0.65)
+            f_use = under_relax(f_nodal, self._f_old, alpha)
         self._f_old = f_use.copy()
 
+        # diagnostics for bidirectional loading (force from this step)
+        net_fz = float(np.sum(f_use[:, 2]))
         uwm = updated_weight_form_find(
             self.nodes,
             self.mesh.elements,
@@ -215,10 +223,12 @@ class QuasiStaticFSI:
         )
         self.nodes = x_new
         self.mesh.nodes = self.nodes.copy()
+        mean_uz = float(
+            np.mean(self.nodes[~self.mesh.fixed, 2] - self.x_bc[~self.mesh.fixed, 2])
+        )
         self.iteration += 1
         # physical time advanced by the fluid block in this outer iteration
         self.time += self.fluid_substeps * self.dt
-
         info = {
             "iteration": float(self.iteration),
             "time": float(self.time),
@@ -229,6 +239,8 @@ class QuasiStaticFSI:
             "uwm_residual": float(uwm.residual),
             "uwm_updates": float(uwm.n_weight_updates),
             "pressure_max": float(np.max(np.abs(pressure))),
+            "net_fz": net_fz,
+            "mean_uz": mean_uz,
             "cfl": float(self.fluid.max_cfl(self.dt)),
             "objective": float(uwm.objective),
         }

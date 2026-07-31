@@ -49,8 +49,9 @@ quasi_static:
   shape_tol: 1.0e-3
   under_relaxation: 0.5      # shape under-relaxation
   load_relaxation: 0.5       # force under-relaxation
-  load_scale: 0.25
-  load_mode: "dynamic_pressure"   # dynamic_pressure | pressure_jump | interpolated_field
+  load_scale: 0.5
+  load_mode: "pressure_jump"   # pressure_jump | dynamic_pressure | interpolated_field
+                               # pressure_jump: continuous two-sided Δp (can reverse)
   fluid_substeps: 10         # PISO steps per outer iteration (↓ → more GIF frames)
   initial_sag: 0.03
   uwm_weight_updates: 20
