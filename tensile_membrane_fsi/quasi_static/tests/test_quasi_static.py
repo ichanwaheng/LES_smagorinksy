@@ -66,6 +66,41 @@ def test_uwm_responds_to_pressure_load():
     assert res.nodes[~mesh.fixed, 2].mean() < -1e-4
 
 
+def test_excel_deformations_export(tmp_path):
+    from openpyxl import load_workbook
+    from excel_export import DeformationRecorder
+
+    mesh = build_rectangular_membrane(
+        nx=4, ny=3, fixed_edges=["left", "right", "bottom", "top"]
+    )
+    ref = mesh.nodes.copy()
+    rec = DeformationRecorder(reference_nodes=ref, fixed=mesh.fixed)
+    for k in range(3):
+        nodes = ref.copy()
+        nodes[~mesh.fixed, 2] -= 0.01 * (k + 1)
+        rec.record(time=0.1 * (k + 1), nodes=nodes, iteration=k + 1)
+    path = rec.write_xlsx(tmp_path / "defs.xlsx", per_step_sheets=True)
+    assert path.exists()
+    wb = load_workbook(path)
+    assert "summary" in wb.sheetnames
+    assert "reference" in wb.sheetnames
+    assert "deformations" in wb.sheetnames
+    assert "step_0001" in wb.sheetnames
+    # 3 steps × n_nodes data rows (+ header)
+    ws = wb["deformations"]
+    assert ws.max_row == 1 + 3 * mesh.n_nodes
+    # spot-check: last free-node row of last step has uz ≈ -0.03
+    free_ids = np.where(~mesh.fixed)[0]
+    assert free_ids.size > 0
+    # deformations rows are ordered by step then node_id
+    # row index (1-based): 1 header + (step-1)*n_nodes + (nid+1)
+    nid = int(free_ids[0])
+    row_idx = 1 + (3 - 1) * mesh.n_nodes + (nid + 1)
+    vals = list(ws.iter_rows(min_row=row_idx, max_row=row_idx, values_only=True))[0]
+    assert vals[0] == 3 and vals[3] == nid
+    assert abs(vals[9] - (-0.03)) < 1e-12
+
+
 def test_quasi_static_smoke():
     cfg = load_config(QS / "config" / "quasi_static.yaml")
     cfg["membrane"]["nx"] = 6

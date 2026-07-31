@@ -46,7 +46,15 @@ python quasi_static/run_gif.py --quick --disp-scale 400
 ```
 
 Outputs go to `quasi_static/output/` (NPZ, VTK, history CSV/PNG, slice plot,
-and `membrane_quasi_static.gif` from `run_gif.py`).
+`membrane_quasi_static.gif` from `run_gif.py`, and
+`membrane_deformations.xlsx` with every node’s `x,y,z` / `ux,uy,uz` at each
+time step).
+
+Excel workbook sheets:
+- `summary` — peak displacement per time step
+- `reference` — flat-plane reference coordinates
+- `deformations` — long table of all nodes × all times
+- `step_XXXX` — one sheet per time step (short runs)
 
 Each GIF frame corresponds to one outer iteration: the fluid advances by
 `fluid_substeps * dt`, then UWM updates the membrane form under the new load.
