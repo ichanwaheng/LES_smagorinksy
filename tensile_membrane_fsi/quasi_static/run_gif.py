@@ -65,7 +65,18 @@ def parse_args():
         help="PISO steps per outer/GIF frame (smaller → more time steps). "
         "Default: config quasi_static.fluid_substeps",
     )
-    p.add_argument("--fps", type=int, default=8, help="GIF frames per second")
+    p.add_argument("--fps", type=int, default=None, help="GIF frames per second (default: realtime)")
+    p.add_argument(
+        "--realtime",
+        action="store_true",
+        default=True,
+        help="Play GIF in real time: total length = t_end seconds (default)",
+    )
+    p.add_argument(
+        "--no-realtime",
+        action="store_true",
+        help="Use --fps instead of real-time frame delay",
+    )
     p.add_argument(
         "--out-dir",
         type=str,
@@ -404,11 +415,32 @@ def main():
 
     if not frames_orig:
         raise SystemExit("no frames recorded — check t_end / fluid_substeps")
-    save_gif(frames_orig, orig_gif_path, fps=args.fps)
-    save_gif(frames_amp, amp_gif_path, fps=args.fps)
+
+    dt_block = sim.fluid_substeps * sim.dt
+    use_realtime = not args.no_realtime and args.fps is None
+    if use_realtime:
+        # one frame per outer step spanning dt_block of physical time
+        duration_ms = max(int(round(1000.0 * dt_block)), 20)
+        fps_eff = 1000.0 / duration_ms
+        save_gif(frames_orig, orig_gif_path, duration_ms=duration_ms)
+        save_gif(frames_amp, amp_gif_path, duration_ms=duration_ms)
+        play_s = len(frames_orig) * duration_ms / 1000.0
+        print(
+            f"[QS-GIF] realtime playback ≈ {play_s:.2f}s "
+            f"({len(frames_orig)} frames × {duration_ms} ms, ~{fps_eff:.1f} fps)"
+        )
+    else:
+        fps = int(args.fps) if args.fps is not None else 8
+        save_gif(frames_orig, orig_gif_path, fps=fps)
+        save_gif(frames_amp, amp_gif_path, fps=fps)
+        print(f"[QS-GIF] playback at {fps} fps")
+
     print(f"[QS-GIF] {len(frames_orig)} frames → {orig_gif_path}  (original)")
     print(f"[QS-GIF] {len(frames_amp)} frames → {amp_gif_path}  (amplified)")
-
+    print(
+        f"[QS-GIF] physical time: t = 0 → {hist.iteration[-1] * dt_block:.3f} s "
+        f"(last frame labeled t = {sim.time:.2f} s)"
+    )
     # keep legacy filename as a copy of the amplified GIF for older docs/links
     legacy = out / "membrane_quasi_static.gif"
     if amp_gif_path.resolve() != legacy.resolve():

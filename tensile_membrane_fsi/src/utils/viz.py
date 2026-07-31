@@ -138,7 +138,18 @@ def render_flutter_frame(
     ax3d.set_zlabel("z [m]")
     ax3d.view_init(elev=18, azim=-55)
     label = title or "Tensile membrane flutter"
-    ax3d.set_title(f"{label}   t = {time:5.2f} s")
+    ax3d.set_title(f"{label}   t = {time:5.2f} s", fontsize=12, pad=8)
+    # Large on-axes time stamp so the end time is obvious in the GIF
+    ax3d.text2D(
+        0.02,
+        0.95,
+        f"t = {time:.2f} s",
+        transform=ax3d.transAxes,
+        fontsize=14,
+        fontweight="bold",
+        color="#0b2e3d",
+        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.85, edgecolor="#1f7a6b"),
+    )
     mappable = cm.ScalarMappable(norm=norm, cmap="coolwarm")
     fig.colorbar(mappable, ax=ax3d, shrink=0.55, pad=0.08, label="Δz [m]")
 
@@ -182,18 +193,34 @@ def render_flutter_frame(
     return img
 
 
-def save_gif(frames: Sequence, out_path: str | Path, fps: int = 12) -> Path:
-    """Write a list of PIL images to an animated GIF."""
+def save_gif(
+    frames: Sequence,
+    out_path: str | Path,
+    fps: int = 12,
+    duration_ms: int | None = None,
+) -> Path:
+    """Write a list of PIL images to an animated GIF.
+
+    Parameters
+    ----------
+    fps :
+        Frames per second (used when ``duration_ms`` is None).
+    duration_ms :
+        Explicit per-frame delay in milliseconds. Overrides ``fps`` when set
+        (e.g. physical Δt × 1000 for real-time playback).
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if not frames:
         raise ValueError("no frames to write")
     frames = list(frames)
+    delay = int(duration_ms) if duration_ms is not None else int(1000 / max(fps, 1))
+    delay = max(delay, 20)  # many viewers ignore <20 ms
     frames[0].save(
         out_path,
         save_all=True,
         append_images=frames[1:],
-        duration=int(1000 / max(fps, 1)),
+        duration=delay,
         loop=0,
         optimize=True,
     )
