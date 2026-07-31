@@ -39,8 +39,10 @@ python quasi_static/main.py -c quasi_static/config/quasi_static.yaml
 python quasi_static/run_gif.py --quick
 python quasi_static/run_gif.py --t-end 1.0 --fps 8
 
-# exaggerate deflection in the GIF only (default ×20; physics unchanged)
-python quasi_static/run_gif.py --quick --disp-scale 25
+# exaggerate deflection in the GIF only (auto targets ~0.8 m peak |Δz|)
+python quasi_static/run_gif.py --quick
+python quasi_static/run_gif.py --quick --target-amp 1.0
+python quasi_static/run_gif.py --quick --disp-scale 400
 ```
 
 Outputs go to `quasi_static/output/` (NPZ, VTK, history CSV/PNG, slice plot,
@@ -48,8 +50,12 @@ and `membrane_quasi_static.gif` from `run_gif.py`).
 
 Each GIF frame corresponds to one outer iteration: the fluid advances by
 `fluid_substeps * dt`, then UWM updates the membrane form under the new load.
-Physical time on the frame is the accumulated fluid time. Deflection in the
-GIF is scaled by `disp_scale` for visibility; saved NPZ/VTK remain physical.
+Physical time on the frame is the accumulated fluid time.
+
+GIF deflection is amplified about the **flat mounting plane** (not the sagged
+seed) and auto-scaled so the peak visual `|Δz|` reaches `target_amp`. The 3D
+panel uses a corrected box aspect so Z is not squashed. Saved NPZ/VTK remain
+physical.
 
 ## Configure
 
