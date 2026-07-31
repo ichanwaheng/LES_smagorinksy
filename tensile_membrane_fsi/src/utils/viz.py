@@ -127,10 +127,16 @@ def render_flutter_frame(
     ax3d.set_xlim(nodes0[:, 0].min() - 0.1, nodes0[:, 0].max() + 0.1)
     ax3d.set_ylim(nodes0[:, 1].min() - 0.1, nodes0[:, 1].max() + 0.1)
     ax3d.set_zlim(*z_limits)
+    # Prevent matplotlib from squashing Z relative to the in-plane spans —
+    # otherwise amplified deflection looks almost flat in the 3D view.
+    xr = float(nodes0[:, 0].max() - nodes0[:, 0].min()) + 0.2
+    yr = float(nodes0[:, 1].max() - nodes0[:, 1].min()) + 0.2
+    zr = float(z_limits[1] - z_limits[0])
+    ax3d.set_box_aspect((xr, yr, max(zr, 0.75 * xr)))
     ax3d.set_xlabel("x [m]")
     ax3d.set_ylabel("y [m]")
     ax3d.set_zlabel("z [m]")
-    ax3d.view_init(elev=22, azim=-60)
+    ax3d.view_init(elev=18, azim=-55)
     label = title or "Tensile membrane flutter"
     ax3d.set_title(f"{label}   t = {time:5.2f} s")
     mappable = cm.ScalarMappable(norm=norm, cmap="coolwarm")
@@ -151,13 +157,19 @@ def render_flutter_frame(
     n_row = mesh_ny + 1
     for j in range(n_row):
         row = nodes[j::n_row]  # structured grid: vid(i, j) = i*(ny+1)+j
-        lw, alpha = (1.8, 1.0) if j == n_row // 2 else (0.7, 0.35)
+        lw, alpha = (2.4, 1.0) if j == n_row // 2 else (1.0, 0.4)
         ax2d.plot(row[:, 0], row[:, 2], color="white", lw=lw, alpha=alpha)
+    # flat reference line through the supports
+    z_ref = float(np.median(nodes0[:, 2]))
+    ax2d.axhline(z_ref, color="#ffdd57", lw=1.0, ls="--", alpha=0.9)
 
     ax2d.set_xlabel("x [m]")
     ax2d.set_ylabel("z [m]")
     ax2d.set_title("Mid-plane fluid speed + membrane profile")
-    ax2d.set_aspect("equal", adjustable="box")
+    # Zoom vertically around the (possibly amplified) membrane so the
+    # deflection is obvious; keep x over the full channel.
+    ax2d.set_ylim(z_limits[0], z_limits[1])
+    ax2d.set_aspect("auto")
 
     fig.tight_layout()
     fig.canvas.draw()

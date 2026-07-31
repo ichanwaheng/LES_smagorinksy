@@ -75,15 +75,33 @@ def parse_args():
         "--disp-scale",
         type=float,
         default=None,
-        help="Visual amplification of membrane deflection in the GIF "
-        "(physics unchanged). Default: config quasi_static.disp_scale or 20",
+        help="Visual amplification of out-of-plane deflection vs the flat "
+        "mounting plane (physics unchanged). Default: auto-scale so the "
+        "peak |Δz| fills ~40%% of the membrane span, or config disp_scale.",
+    )
+    p.add_argument(
+        "--target-amp",
+        type=float,
+        default=None,
+        help="Target visual peak |Δz| [m] for auto scaling (default: 0.4×span)",
     )
     return p.parse_args()
 
 
-def _amplify_nodes(nodes: np.ndarray, nodes0: np.ndarray, scale: float) -> np.ndarray:
-    """Return nodes0 + scale * (nodes - nodes0) for display only."""
-    return nodes0 + float(scale) * (nodes - nodes0)
+def _amplify_z(
+    nodes: np.ndarray,
+    z_ref: float,
+    scale: float,
+) -> np.ndarray:
+    """Amplify out-of-plane deflection about the flat mounting plane (GIF only)."""
+    out = np.asarray(nodes, dtype=float).copy()
+    out[:, 2] = float(z_ref) + float(scale) * (out[:, 2] - float(z_ref))
+    return out
+
+
+def _auto_disp_scale(nodes: np.ndarray, z_ref: float, target_amp: float) -> float:
+    phys = float(np.max(np.abs(nodes[:, 2] - z_ref)))
+    return float(target_amp) / max(phys, 1e-9)
 
 
 def main():
@@ -101,18 +119,13 @@ def main():
         cfg["time"]["t_end"] = 0.4
         cfg["quasi_static"]["fluid_substeps"] = 4
         cfg["quasi_static"]["max_iters"] = 40
-        cfg["quasi_static"]["load_scale"] = 0.35
+        cfg["quasi_static"]["load_scale"] = 1.5
         cfg["quasi_static"]["shape_tol"] = 0.0  # do not early-stop on shape
         cfg["les"]["enabled"] = True
 
     if args.t_end is not None:
         cfg["time"]["t_end"] = args.t_end
 
-    # keep iterating through the full interval (GIF needs every frame)
-    cfg["quasi_static"]["shape_tol"] = float(cfg["quasi_static"].get("shape_tol", 0.0))
-    if cfg["quasi_static"]["shape_tol"] > 0 and args.t_end is None and not args.quick:
-        # for timed GIF runs, disable early exit unless user set shape_tol=0
-        pass
     cfg.setdefault("quasi_static", {})
     # ensure we do not stop after first converged shape when making a movie
     cfg["quasi_static"]["shape_tol"] = 0.0
@@ -120,53 +133,63 @@ def main():
     out = ensure_dir(ROOT / cfg["simulation"].get("output_dir", "quasi_static/output"))
     gif_path = Path(args.out) if args.out else out / "membrane_quasi_static.gif"
 
-    disp_scale = float(
-        args.disp_scale
-        if args.disp_scale is not None
-        else cfg.get("quasi_static", {}).get("disp_scale", 20.0)
-    )
-    if args.quick and args.disp_scale is None:
-        disp_scale = float(cfg.get("quasi_static", {}).get("disp_scale", 25.0))
-
     sim = QuasiStaticFSI(cfg)
-    nodes0 = sim.x_bc.copy()
+    # flat mounting plane (supports); used as the amplification reference
+    z0 = float(cfg["fluid"]["membrane_z0"])
+    nodes_flat = sim.x_bc.copy()
+    nodes_flat[:, 2] = z0
     mesh_nx, mesh_ny = sim.mesh.nx, sim.mesh.ny
     j_slice = sim.grid.ny // 2
+    span = float(cfg["membrane"]["length"])
+    target_amp = float(
+        args.target_amp
+        if args.target_amp is not None
+        else cfg.get("quasi_static", {}).get("target_amp", 0.4 * span)
+    )
+
+    # choose scale from current form (updated again on first frame)
+    if args.disp_scale is not None:
+        disp_scale = float(args.disp_scale)
+    elif cfg.get("quasi_static", {}).get("disp_scale", None) not in (None, "auto"):
+        disp_scale = float(cfg["quasi_static"]["disp_scale"])
+    else:
+        disp_scale = _auto_disp_scale(sim.nodes, z0, target_amp)
 
     U = float(cfg["fluid"]["U_inlet"])
     speed_max = 1.6 * U
-    z0 = float(cfg["fluid"]["membrane_z0"])
-    # colour / axis scales use amplified deflection so motion is obvious
-    sag0 = float(cfg["quasi_static"].get("initial_sag", 0.03))
-    disp_max = max(0.12, disp_scale * 1.5 * sag0)
-    z_span = max(0.25 * float(cfg["fluid"]["domain"]["H"]), 1.2 * disp_max)
+    disp_max = max(0.15, 1.15 * target_amp)
+    z_span = max(1.25 * disp_max, 0.35)
     z_limits = (z0 - z_span, z0 + z_span)
-    title = f"Quasi-static UWM membrane  (×{disp_scale:g} disp.)"
 
     frames = []
     t0 = walltime.time()
     t_end = float(cfg["time"]["t_end"])
-    peak_disp = sag0
 
     def on_frame(simulation, info, k):
-        nonlocal peak_disp, disp_max, z_limits
+        nonlocal disp_scale, disp_max, z_limits
         st = simulation.fluid.state
         speed = np.sqrt(
             st.u[:, j_slice, :] ** 2
             + st.v[:, j_slice, :] ** 2
             + st.w[:, j_slice, :] ** 2
         )
-        # amplify deflection for the GIF only (NPZ/VTK stay physical)
-        nodes_vis = _amplify_nodes(simulation.nodes, nodes0, disp_scale)
-        peak_disp = max(peak_disp, float(info["max_disp"]))
-        disp_max = max(disp_max, disp_scale * 1.25 * peak_disp + 1e-6)
-        z_span_now = max(0.25 * float(cfg["fluid"]["domain"]["H"]), 1.2 * disp_max)
+        # Auto-scale from true out-of-plane deflection about the flat plane
+        # (not about the sagged initial guess — that hid the pressure shape).
+        if args.disp_scale is None and cfg.get("quasi_static", {}).get(
+            "disp_scale", "auto"
+        ) in (None, "auto"):
+            disp_scale = _auto_disp_scale(simulation.nodes, z0, target_amp)
+        nodes_vis = _amplify_z(simulation.nodes, z0, disp_scale)
+        vis_peak = float(np.max(np.abs(nodes_vis[:, 2] - z0)))
+        disp_max = max(0.15, 1.15 * vis_peak, 1.15 * target_amp)
+        z_span_now = max(1.25 * disp_max, 0.35)
         z_limits = (z0 - z_span_now, z0 + z_span_now)
+        title = f"Quasi-static UWM membrane  (×{disp_scale:.0f} Δz vs flat)"
         frames.append(
             render_flutter_frame(
                 nodes_vis,
                 simulation.mesh.elements,
-                nodes0,
+                nodes_flat,
                 speed,
                 simulation.grid.x,
                 simulation.grid.z,
@@ -179,10 +202,11 @@ def main():
                 title=title,
             )
         )
+        phys_peak = float(np.max(np.abs(simulation.nodes[:, 2] - z0)))
         print(
             f"  frame {len(frames):3d}  t={info['time']:6.3f}s  "
-            f"disp={info['max_disp']:.4e} m  "
-            f"disp×{disp_scale:g}={disp_scale * info['max_disp']:.3f} m  "
+            f"Δz_phys={phys_peak:.4e} m  "
+            f"×{disp_scale:.0f} → {vis_peak:.3f} m  "
             f"|p|_max={info['pressure_max']:.2f} Pa  "
             f"[{walltime.time() - t0:6.1f}s wall]"
         )
@@ -265,7 +289,7 @@ def main():
         sim.nodes,
         sim.mesh.elements,
         out / "membrane_final.png",
-        displacement=sim.nodes - nodes0,
+        displacement=sim.nodes - nodes_flat,
         title="Final quasi-static UWM form",
     )
 
