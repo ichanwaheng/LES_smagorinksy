@@ -1,0 +1,10 @@
+output/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.xlsx
+*.gif
+*.npz
+*.vtk
+*.png
+*.csv

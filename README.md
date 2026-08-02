@@ -1,16 +1,25 @@
 # LES_smagorinksy
 
-Incompressible LES (Smagorinsky) / PISO finite-volume work, plus a coupled
-**tensile membrane FSI** package.
+Incompressible LES (Smagorinsky) / PISO finite-volume work, plus coupled
+tensile-membrane FSI packages.
 
-## Tensile membrane under fluid flow
+## Standalone quasi-static FSI (recommended entry)
 
-See [`tensile_membrane_fsi/`](tensile_membrane_fsi/) for a full folder of codes:
+Self-contained folder — **no imports from other repo code**:
 
-- prestressed membrane FEM
-- Cartesian fluid solver with Smagorinsky LES
-- partitioned FSI coupling
-- examples, tests, and YAML configuration
+See [`quasi_static/`](quasi_static/)
+
+```bash
+cd quasi_static
+pip install -r requirements.txt
+python main.py --quick
+python run_gif.py --quick
+```
+
+## Transient / full tensile membrane package
+
+See [`tensile_membrane_fsi/`](tensile_membrane_fsi/) for the broader package
+(transient explicit dynamics, examples, docs):
 
 ```bash
 cd tensile_membrane_fsi
