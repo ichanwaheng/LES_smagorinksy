@@ -1,5 +1,9 @@
 # Quasi-static FSI — Updated Weight Method + PISO/LES
 
+> **Standalone copy:** a fully independent package (vendored fluid/membrane/FSI,
+> no imports from this tree) lives at the repo root:
+> [`../../quasi_static/`](../../quasi_static/). Prefer that folder for new work.
+
 Partitioned **quasi-static** fluid–structure interaction for prestressed tensile
 membranes. The membrane form is updated with the **Updated Weight Method (UWM)**
 (Marbaniang, Dutta & Ghosh, 2022); the fluid is advanced with **Smagorinsky LES**
